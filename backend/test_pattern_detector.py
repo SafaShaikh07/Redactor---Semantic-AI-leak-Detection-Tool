@@ -86,8 +86,10 @@ def test_credit_card():
     redacted, has_secrets, reasons, spans = scan_and_redact(text)
     assert has_secrets
     assert "credit_card" in reasons
+    assert "aadhaar_number" not in reasons
     assert "Valid: [REDACTED: credit_card]" in redacted
     assert "Invalid: 1234 5678 9012 3456" in redacted
+    assert all(s["severity"] == "redact" for s in spans)
 
 def test_ssn():
     text = "Social security: 123-45-6789"
@@ -102,6 +104,15 @@ def test_aadhaar_number():
     assert has_secrets
     assert "aadhaar_number" in reasons
     assert "[REDACTED: aadhaar_number]" in redacted
+    assert spans[0]["severity"] == "block"
+
+    # Genuine 12-digit Aadhaar format number regression test
+    text2 = "Aadhaar: 4521 8890 3345"
+    r2, h2, re2, s2 = scan_and_redact(text2)
+    assert h2
+    assert "aadhaar_number" in re2
+    assert "credit_card" not in re2
+    assert s2[0]["severity"] == "block"
 
 def test_ip_address():
     text = "Local IP is 192.168.1.50 and Public DNS is 8.8.8.8"
