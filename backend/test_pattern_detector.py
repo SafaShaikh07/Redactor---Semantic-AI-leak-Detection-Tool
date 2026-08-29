@@ -9,6 +9,14 @@ def test_api_key():
     assert len(spans) == 1
     assert spans[0]["reason"] == "api_key"
 
+    # OpenAI project-scoped key regression test
+    proj_text = "Project key is sk-proj-8fJ2kLmN9pQrStUvWxYz0123456789ABC"
+    p_redacted, p_has_secrets, p_reasons, p_spans = scan_and_redact(proj_text)
+    assert p_has_secrets
+    assert "api_key" in p_reasons
+    assert "[REDACTED: api_key]" in p_redacted
+    assert p_spans[0]["reason"] == "api_key"
+
 def test_email():
     text = "Contact me at user@example.com for info"
     redacted, has_secrets, reasons, spans = scan_and_redact(text)

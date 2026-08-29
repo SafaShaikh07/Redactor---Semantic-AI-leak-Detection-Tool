@@ -28,7 +28,7 @@ def get_severity(reason: str, matched_text: str) -> str:
     return "redact"
 
 PATTERNS = [
-    ("api_key", re.compile(r"sk-[A-Za-z0-9]{20,}"), "[REDACTED: api_key]"),
+    ("api_key", re.compile(r"sk-(?:[a-zA-Z0-9]+-)?[a-zA-Z0-9_-]{20,}"), "[REDACTED: api_key]"),
     (
         "db_connection_string",
         re.compile(r"(postgresql|postgres|mysql|mongodb|redis)://[^\s/@:]+(?::[^\s/@]+)?@[^\s/@:]+(?::\d+)?", re.IGNORECASE),
@@ -61,27 +61,30 @@ PATTERNS = [
 
 def normalize_with_mapping(text: str) -> Tuple[str, List[int]]:
     norm_chars = []
-    norm_to_orig = []
+    norm_map = []
     i = 0
     n = len(text)
-    while i < n:
-        char = text[i]
-        if char in (' ', '\t'):
-            prev_char = text[i-1] if i > 0 else ''
-            j = i + 1
-            while j < n and text[j] in (' ', '\t'):
-                j += 1
-            next_char = text[j] if j < n else ''
 
-            if prev_char in ('-', '_', ':', '=') or (prev_char.isalnum() and next_char.isalnum()):
+    while i < n:
+        if text[i] in (' ', '\t'):
+            prev_slice = text[max(0, i-12):i].lower()
+            if (
+                prev_slice.endswith("sk-")
+                or prev_slice.endswith("sk-proj-")
+                or prev_slice.endswith("sk-ant-")
+                or prev_slice.endswith("sk-live-")
+                or prev_slice.endswith("sk-test-")
+                or prev_slice.endswith("=")
+                or prev_slice.endswith(":")
+            ):
                 i += 1
                 continue
 
-        norm_chars.append(char)
-        norm_to_orig.append(i)
+        norm_chars.append(text[i])
+        norm_map.append(i)
         i += 1
 
-    return "".join(norm_chars), norm_to_orig
+    return "".join(norm_chars), norm_map
 
 def get_match_spans(text: str) -> List[dict]:
     spans = []
@@ -122,7 +125,18 @@ def get_match_spans(text: str) -> List[dict]:
                 if tag:
                     spans.append({"start": m_start, "end": m_end, "reason": tag, "severity": "redact"})
             elif reason == "generic_secret_assignment":
-                spans.append({"start": m_start, "end": m_end, "reason": reason, "severity": "redact"})
+                sep_idx = max(matched_str.find("="), matched_str.find(":"))
+                if sep_idx != -1:
+                    val_start = m_start + sep_idx + 1
+                    while val_start < m_end and text[val_start] in (" ", "\t"):
+                        val_start += 1
+                    spans.append({"start": val_start, "end": m_end, "reason": reason, "severity": "redact"})
+                else:
+                    spans.append({"start": m_start, "end": m_end, "reason": reason, "severity": "redact"})
+            elif reason == "db_connection_string":
+                sev = get_severity(reason, matched_str)
+                proto_len = len(matched_str.split("://")[0]) + 3 if "://" in matched_str else 0
+                spans.append({"start": m_start + proto_len, "end": m_end, "reason": reason, "severity": sev})
             else:
                 sev = get_severity(reason, matched_str)
                 spans.append({"start": m_start, "end": m_end, "reason": reason, "severity": sev})
