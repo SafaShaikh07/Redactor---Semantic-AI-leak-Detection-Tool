@@ -6,7 +6,7 @@ It acts as a real-time local security guard, running both **deep pattern detecti
 
 ---
 
-## 🌟 Key Features
+##  Key Features
 
 - **Chrome Extension (MV3)**:
   - Hooks directly into ChatGPT prompt boxes (`chatgpt.com`).
@@ -45,7 +45,7 @@ It acts as a real-time local security guard, running both **deep pattern detecti
 
 ---
 
-## 🏗️ Project Architecture
+##  Project Architecture
 
 ```
 Redactor/
@@ -70,7 +70,7 @@ Redactor/
 
 ---
 
-## 🚀 Getting Started
+##  Getting Started
 
 ### 1. Prerequisites
 - **Python**: Version 3.8 or higher.
@@ -115,7 +115,7 @@ The API and Live Dashboard will be available at:
 
 ---
 
-## 🧪 Running Tests
+##  Running Tests
 
 Redactor includes three test suites for verifying pattern accuracy, red-team obfuscation detection, and benign prompt false-positive rates:
 
@@ -132,6 +132,6 @@ python backend/tests/test_benign.py
 
 ---
 
-## 📄 License
+##  License
 
 This project is open-source and available under the [MIT License](LICENSE).
