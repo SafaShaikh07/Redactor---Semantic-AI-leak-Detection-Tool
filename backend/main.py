@@ -186,7 +186,7 @@ def check_text(request: CheckRequest):
             start=m["start"],
             end=m["end"],
             reason=m["reason"],
-            severity="redact"
+            severity=m.get("severity", "redact")
         )
         for m in raw_matches
     ]
@@ -199,6 +199,9 @@ def check_text(request: CheckRequest):
             severity="redact"
         ))
 
+    # Check for BLOCK-level severity priority
+    has_block = any(m.severity == "block" for m in matches)
+
     # Construct structured details
     detail_parts = []
     if raw_matches:
@@ -210,6 +213,27 @@ def check_text(request: CheckRequest):
         detail_parts.append(f"{sim_pct}% match to {doc_name}")
 
     reason_detail = " | ".join(detail_parts) if detail_parts else None
+
+    if has_block:
+        action = "block"
+        matched_doc = doc_name if is_semantic_match else None
+
+        if has_secrets and is_semantic_match:
+            reason = f"secret ({', '.join(secret_reasons)}) & semantic match"
+        elif has_secrets:
+            reason = ", ".join(secret_reasons)
+        else:
+            reason = "semantic match"
+
+        log_check(input_len, action, reason, matched_doc, reason_detail)
+        return CheckResponse(
+            action=action,
+            reason=reason,
+            matched_doc=matched_doc,
+            redacted_text=None,
+            matches=matches,
+            reason_detail=reason_detail
+        )
 
     if has_secrets or is_semantic_match:
         action = "redact"

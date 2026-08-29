@@ -17,6 +17,16 @@ def classify_ip(s: str) -> str:
     except ValueError:
         return ""
 
+def get_severity(reason: str, matched_text: str) -> str:
+    if reason in {"private_key_block", "aadhaar_number", "ssn"}:
+        return "block"
+    if reason == "db_connection_string":
+        parts = matched_text.split("@")
+        if len(parts) > 1 and ":" in parts[0].split("://")[-1]:
+            return "block"
+        return "redact"
+    return "redact"
+
 PATTERNS = [
     ("api_key", re.compile(r"sk-[A-Za-z0-9]{20,}"), "[REDACTED: api_key]"),
     (
@@ -58,20 +68,23 @@ def get_match_spans(text: str) -> List[dict]:
 
         for match in pattern.finditer(text):
             m_start, m_end = match.start(), match.end()
+            matched_str = match.group(0)
+
             if replacement == "luhn_callback":
-                if is_luhn_valid(match.group(0)):
-                    spans.append({"start": m_start, "end": m_end, "reason": "credit_card"})
+                if is_luhn_valid(matched_str):
+                    spans.append({"start": m_start, "end": m_end, "reason": "credit_card", "severity": "redact"})
             elif replacement == "ip_callback":
-                tag = classify_ip(match.group(0))
+                tag = classify_ip(matched_str)
                 if tag:
-                    spans.append({"start": m_start, "end": m_end, "reason": tag})
+                    spans.append({"start": m_start, "end": m_end, "reason": tag, "severity": "redact"})
             elif reason == "generic_secret_assignment":
                 if len(match.groups()) >= 2 and match.start(2) != -1:
-                    spans.append({"start": match.start(2), "end": match.end(2), "reason": reason})
+                    spans.append({"start": match.start(2), "end": match.end(2), "reason": reason, "severity": "redact"})
                 else:
-                    spans.append({"start": m_start, "end": m_end, "reason": reason})
+                    spans.append({"start": m_start, "end": m_end, "reason": reason, "severity": "redact"})
             else:
-                spans.append({"start": m_start, "end": m_end, "reason": reason})
+                sev = get_severity(reason, matched_str)
+                spans.append({"start": m_start, "end": m_end, "reason": reason, "severity": sev})
     return spans
 
 def scan_and_redact(text: str) -> Tuple[str, bool, List[str], List[dict]]:

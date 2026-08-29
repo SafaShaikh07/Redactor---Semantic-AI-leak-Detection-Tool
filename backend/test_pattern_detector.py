@@ -115,6 +115,29 @@ def test_no_false_positives():
     assert reasons == []
     assert redacted == text
 
+def test_severity_levels():
+    # BLOCK-level categories
+    _, _, _, spans1 = scan_and_redact("My SSN is 123-45-6789")
+    assert spans1[0]["severity"] == "block"
+
+    _, _, _, spans2 = scan_and_redact("Aadhaar 3675 9834 6012")
+    assert spans2[0]["severity"] == "block"
+
+    _, _, _, spans3 = scan_and_redact("-----BEGIN RSA PRIVATE KEY-----\nkey\n-----END RSA PRIVATE KEY-----")
+    assert spans3[0]["severity"] == "block"
+
+    # DB connection with password -> block
+    _, _, _, spans4 = scan_and_redact("postgresql://admin:secret123@db.internal/Customer_Master")
+    assert spans4[0]["severity"] == "block"
+
+    # DB connection without password -> redact
+    _, _, _, spans5 = scan_and_redact("postgresql://admin@db.internal/Customer_Master")
+    assert spans5[0]["severity"] == "redact"
+
+    # REDACT-level categories
+    _, _, _, spans6 = scan_and_redact("sk-123456789012345678901234 user@example.com")
+    assert all(s["severity"] == "redact" for s in spans6)
+
 if __name__ == "__main__":
     test_api_key()
     test_email()
@@ -131,4 +154,5 @@ if __name__ == "__main__":
     test_crypto_wallet()
     test_multiple_categories()
     test_no_false_positives()
+    test_severity_levels()
     print("All tests passed!")
