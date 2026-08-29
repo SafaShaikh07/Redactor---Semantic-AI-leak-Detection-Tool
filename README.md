@@ -1,4 +1,4 @@
-# Redactor — Semantic AI Leak Detection & Security Guard
+# Redactor - Semantic AI Leak Detection & Security Tool
 
 Redactor is a privacy and data-loss prevention (DLP) tool designed to prevent sensitive company information, credentials, and PII from being leaked into public AI models (such as ChatGPT).
 
@@ -6,7 +6,7 @@ It acts as a real-time local security guard, running both **deep pattern detecti
 
 ---
 
-## 🌟 Key Features
+##  Key Features
 
 - **Chrome Extension (MV3)**:
   - Hooks directly into ChatGPT prompt boxes (`chatgpt.com`).
@@ -38,7 +38,7 @@ It acts as a real-time local security guard, running both **deep pattern detecti
 
 ---
 
-## 🏗️ Project Architecture
+##  Project Architecture
 
 ```
 Redactor/
@@ -59,7 +59,7 @@ Redactor/
 
 ---
 
-## 🚀 Getting Started
+##  Getting Started
 
 ### 1. Prerequisites
 - **Python**: Version 3.8 or higher.
@@ -102,7 +102,7 @@ The API and Live Dashboard will be available at:
 
 ---
 
-## 🧪 Running Tests
+##  Running Tests
 
 To run the standalone unit test suite for the pattern detector:
 
