@@ -1,20 +1,20 @@
 {
-  "last_updated": "2026-08-29T14:07:46.118529+00:00",
+  "last_updated": "2026-08-29T14:10:41.982059+00:00",
   "redteam": {
     "total": 6,
-    "regex_hits": 1,
+    "regex_hits": 2,
     "semantic_hits": 2,
     "blocked": 0,
-    "redacted": 3,
-    "allowed": 3,
+    "redacted": 4,
+    "allowed": 2,
     "cases": [
       {
         "id": 1,
         "name": "Secret with inserted whitespace",
-        "regex": "MISS",
+        "regex": "HIT",
         "semantic": "MISS",
-        "action": "ALLOW",
-        "detail": "No match"
+        "action": "REDACT",
+        "detail": "api_key"
       },
       {
         "id": 2,
@@ -58,7 +58,7 @@
       }
     ]
   },
-  "summary_line": "Catches 3/6 obfuscation techniques via layers; 28/28 benign prompts correctly allowed.",
+  "summary_line": "Catches 4/6 obfuscation techniques via layers; 28/28 benign prompts correctly allowed.",
   "benign": {
     "total": 28,
     "passed": 28,

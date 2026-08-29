@@ -59,17 +59,61 @@ PATTERNS = [
     ),
 ]
 
+def normalize_with_mapping(text: str) -> Tuple[str, List[int]]:
+    norm_chars = []
+    norm_to_orig = []
+    i = 0
+    n = len(text)
+    while i < n:
+        char = text[i]
+        if char in (' ', '\t'):
+            prev_char = text[i-1] if i > 0 else ''
+            j = i + 1
+            while j < n and text[j] in (' ', '\t'):
+                j += 1
+            next_char = text[j] if j < n else ''
+
+            if prev_char in ('-', '_', ':', '=') or (prev_char.isalnum() and next_char.isalnum()):
+                i += 1
+                continue
+
+        norm_chars.append(char)
+        norm_to_orig.append(i)
+        i += 1
+
+    return "".join(norm_chars), norm_to_orig
+
 def get_match_spans(text: str) -> List[dict]:
     spans = []
+    norm_text, norm_map = normalize_with_mapping(text)
+
     for item in PATTERNS:
         reason = item[0]
         pattern = item[1]
         replacement = item[2] if len(item) > 2 else f"[REDACTED: {reason}]"
 
-        for match in pattern.finditer(text):
-            m_start, m_end = match.start(), match.end()
-            matched_str = match.group(0)
+        matches_orig = list(pattern.finditer(text))
+        matches_norm = list(pattern.finditer(norm_text)) if norm_map else []
 
+        found_matches = []
+        for match in matches_orig:
+            found_matches.append((match.start(), match.end(), match.group(0)))
+
+        for match in matches_norm:
+            if not norm_map or match.start() >= len(norm_map):
+                continue
+            orig_start = norm_map[match.start()]
+            orig_end_idx = match.end() - 1
+            if orig_end_idx >= len(norm_map):
+                orig_end = len(text)
+            else:
+                orig_end = norm_map[orig_end_idx] + 1
+            matched_str = text[orig_start:orig_end]
+
+            if not any(abs(m[0] - orig_start) <= 2 and abs(m[1] - orig_end) <= 2 for m in found_matches):
+                found_matches.append((orig_start, orig_end, matched_str))
+
+        for m_start, m_end, matched_str in found_matches:
             if replacement == "luhn_callback":
                 if is_luhn_valid(matched_str):
                     spans.append({"start": m_start, "end": m_end, "reason": "credit_card", "severity": "redact"})
@@ -78,10 +122,7 @@ def get_match_spans(text: str) -> List[dict]:
                 if tag:
                     spans.append({"start": m_start, "end": m_end, "reason": tag, "severity": "redact"})
             elif reason == "generic_secret_assignment":
-                if len(match.groups()) >= 2 and match.start(2) != -1:
-                    spans.append({"start": match.start(2), "end": match.end(2), "reason": reason, "severity": "redact"})
-                else:
-                    spans.append({"start": m_start, "end": m_end, "reason": reason, "severity": "redact"})
+                spans.append({"start": m_start, "end": m_end, "reason": reason, "severity": "redact"})
             else:
                 sev = get_severity(reason, matched_str)
                 spans.append({"start": m_start, "end": m_end, "reason": reason, "severity": sev})
@@ -89,57 +130,30 @@ def get_match_spans(text: str) -> List[dict]:
 
 def scan_and_redact(text: str) -> Tuple[str, bool, List[str], List[dict]]:
     """
-    Scans text for sensitive patterns and secrets.
+    Scans text for sensitive patterns and secrets (supporting optional whitespace in key runs).
     Replaces matched spans with '[REDACTED: reason]'.
     Returns (redacted_text, has_secrets, reasons, match_spans).
     """
-    redacted_text = text
-    found_reasons = []
     spans = get_match_spans(text)
+    if not spans:
+        return text, False, [], []
 
-    for item in PATTERNS:
-        reason = item[0]
-        pattern = item[1]
-        replacement = item[2] if len(item) > 2 else f"[REDACTED: {reason}]"
+    # Deduplicate spans
+    unique_spans = []
+    for s in sorted(spans, key=lambda x: (x["start"], -x["end"])):
+        if not any(u["start"] <= s["start"] and u["end"] >= s["end"] for u in unique_spans):
+            unique_spans.append(s)
 
-        if replacement == "luhn_callback":
-            matches_found = False
-            def _card_sub(match):
-                nonlocal matches_found
-                val = match.group(0)
-                if is_luhn_valid(val):
-                    matches_found = True
-                    return "[REDACTED: credit_card]"
-                return val
+    found_reasons = []
+    redacted_text = text
 
-            new_text = pattern.sub(_card_sub, redacted_text)
-            if matches_found:
-                if reason not in found_reasons:
-                    found_reasons.append(reason)
-                redacted_text = new_text
-
-        elif replacement == "ip_callback":
-            sub_reasons = []
-            def _ip_sub(match):
-                val = match.group(0)
-                tag = classify_ip(val)
-                if tag:
-                    if tag not in sub_reasons:
-                        sub_reasons.append(tag)
-                    return f"[REDACTED: {tag}]"
-                return val
-
-            redacted_text = pattern.sub(_ip_sub, redacted_text)
-            for r in sub_reasons:
-                if r not in found_reasons:
-                    found_reasons.append(r)
-
-        else:
-            matches = list(pattern.finditer(redacted_text))
-            if matches:
-                if reason not in found_reasons:
-                    found_reasons.append(reason)
-                redacted_text = pattern.sub(replacement, redacted_text)
+    # Apply redactions right-to-left
+    for s in sorted(unique_spans, key=lambda x: x["start"], reverse=True):
+        reason = s["reason"]
+        if reason not in found_reasons:
+            found_reasons.insert(0, reason)
+        repl = f"[REDACTED: {reason}]"
+        redacted_text = redacted_text[:s["start"]] + repl + redacted_text[s["end"]:]
 
     has_secrets = len(found_reasons) > 0
-    return redacted_text, has_secrets, found_reasons, spans
+    return redacted_text, has_secrets, found_reasons, unique_spans

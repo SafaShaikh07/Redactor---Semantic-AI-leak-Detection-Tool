@@ -2,21 +2,26 @@
 
 Redactor is a privacy and data-loss prevention (DLP) tool designed to prevent sensitive company information, credentials, and PII from being leaked into public AI models (such as ChatGPT).
 
-It acts as a real-time local security guard, running both **deep pattern detection (regex + Luhn algorithm)** and **local semantic vector similarity checks** right before prompts leave your browser.
+It acts as a real-time local security guard, running both **deep pattern detection (regex + Luhn algorithm + whitespace normalization)** and **local semantic vector similarity checks** right before prompts leave your browser.
 
 ---
 
-##  Key Features
+## 🌟 Key Features
 
 - **Chrome Extension (MV3)**:
   - Hooks directly into ChatGPT prompt boxes (`chatgpt.com`).
-  - **Live Typing Risk Indicator**: Shows a real-time status badge (🟢 Clear, 🟡 Sensitive content detected, 🔴 Will be blocked) debounced ~600ms while you type.
+  - **Live Typing Risk Indicator**: Shows a real-time status badge (🟢 Clear, 🟡 Sensitive content detected, 🔴 Will be blocked) debounced ~600ms while you type with interactive hover explanations.
   - **Live Inline Preview Overlay**: Highlights sensitive matches inline over the prompt box in real-time.
   - **Auto-Redaction & Blocking**: Replaces sensitive spans with `[REDACTED: reason]` before sending, or blocks critical prompts completely.
 
-- **Deep Pattern Detection Engine (13 Categories)**:
-  - **API Keys**: OpenAI-style keys (`sk-...`).
-  - **Database Connection Strings**: Redacts credentials in `postgresql://`, `mysql://`, `mongodb://`, `redis://`, etc.
+- **Two-Tier Severity & Decision Logic**:
+  - **BLOCK-Level (Action: `block`)**: Refuses to send any version of the prompt if critical data is detected (Private Keys, SSN, Indian Aadhaar, Database URIs containing passwords).
+  - **REDACT-Level (Action: `redact`)**: Strips the sensitive span and allows the cleaned prompt through (API Keys, Email, Phone Numbers, PAN Numbers, Credit Cards, IP Addresses, Crypto Wallets, Generic Secret Assignments, Project Codenames).
+  - **Priority Logic**: Any `BLOCK`-level match triggers a prompt block regardless of other matches.
+
+- **Deep Pattern Detection Engine (13 Categories + Whitespace Normalization)**:
+  - **API Keys**: OpenAI-style keys (`sk-...`) with internal whitespace tolerance (`sk- abc123...`).
+  - **Database Connection Strings**: Redacts credentials in `postgresql://`, `mysql://`, `mongodb://`, `redis://`, etc., elevating to `BLOCK` when passwords are included.
   - **Private Keys**: PEM-format private key blocks (`-----BEGIN PRIVATE KEY-----`).
   - **Generic Secret Assignments**: Catch-all for `KEY=value` or `KEY: value` lines containing `SECRET`, `PASSWORD`, `TOKEN`, `API_KEY`, etc.
   - **Credit Cards**: Validates 13–19 digit card numbers using the **Luhn algorithm** to eliminate false positives.
@@ -31,35 +36,41 @@ It acts as a real-time local security guard, running both **deep pattern detecti
   - Vectorizes internal documents (`./corpus/*.txt`) at startup.
   - Flags prompts matching confidential docs with cosine similarity > **0.45**, catching paraphrased or reworded leaks.
 
-- **Live Monitoring Dashboard & Audit Logging**:
-  - Dark-themed live dashboard served at `http://localhost:8000/`.
-  - Auto-refreshes every 5 seconds to display real-time prompt check activity.
-  - SQLite audit log (`backend/logs.db`) capturing length, action, reason, matched doc, and timestamp.
+- **Live Monitoring Dashboard, Metrics & Audit Logging**:
+  - **Stats Bar**: Displays total checks, block rate %, redact rate %, and average latency (ms).
+  - **Live Protection Log**: Dark-themed table served at `http://localhost:8000/` auto-refreshed every 5 seconds.
+  - **Interactive Tooltips**: Hovering over any `REASON` cell shows character span lengths for patterns or percentage match scores + document names for semantic matches.
+  - **Collapsible Detection Coverage Report**: Renders persisted audit results from red-team obfuscation probes and benign prompt false-positive benchmarks (`GET /coverage`).
+  - **SQLite Audit Log**: Backward-compatible SQLite database (`backend/logs.db`) storing length, action, reason, matched doc, reason details, latency (ms), and ISO8601 UTC timestamp.
 
 ---
 
-##  Project Architecture
+## 🏗️ Project Architecture
 
 ```
 Redactor/
 ├── backend/                  # FastAPI Python Service
-│   ├── main.py               # REST API (/check, /logs, Live Dashboard /)
-│   ├── pattern_detector.py   # Regex & Luhn validation engine
+│   ├── main.py               # REST API (/check, /logs, /metrics, /coverage, Dashboard /)
+│   ├── pattern_detector.py   # Regex, Luhn validation & whitespace normalization engine
 │   ├── corpus.py             # SentenceTransformer vector embedding & cosine check
-│   ├── db.py                 # SQLite audit logger (logs.db)
-│   ├── test_pattern_detector.py # Unit test suite
+│   ├── db.py                 # SQLite audit logger & aggregate metrics engine (logs.db)
+│   ├── coverage_results.json # Persisted test suite benchmarks & coverage data
+│   ├── test_pattern_detector.py # Pattern unit test suite
+│   ├── tests/
+│   │   ├── test_redteam.py   # Red team obfuscated secret probe suite
+│   │   └── test_benign.py    # Benign prompt false-positive benchmark suite
 │   └── requirements.txt      # Python dependencies
 ├── corpus/                   # Confidential reference document corpus (.txt)
 ├── extension/                # Chrome MV3 Content Extension
 │   ├── manifest.json         # Extension configuration
-│   ├── content.js            # Interception, typing preview overlay, toast notifications
+│   ├── content.js            # Interception, typing preview overlay, risk badge, toasts
 │   └── README.md             # Extension installation guide
 └── README.md                 # Project Overview & Setup Guide
 ```
 
 ---
 
-##  Getting Started
+## 🚀 Getting Started
 
 ### 1. Prerequisites
 - **Python**: Version 3.8 or higher.
@@ -88,6 +99,8 @@ uvicorn main:app --reload
 The API and Live Dashboard will be available at:
 - **Live Dashboard**: [http://localhost:8000/](http://localhost:8000/)
 - **API Endpoint**: `POST http://localhost:8000/check`
+- **Metrics API**: `GET http://localhost:8000/metrics`
+- **Coverage API**: `GET http://localhost:8000/coverage`
 - **Interactive Swagger Docs**: [http://localhost:8000/docs](http://localhost:8000/docs)
 
 ---
@@ -102,12 +115,19 @@ The API and Live Dashboard will be available at:
 
 ---
 
-##  Running Tests
+## 🧪 Running Tests
 
-To run the standalone unit test suite for the pattern detector:
+Redactor includes three test suites for verifying pattern accuracy, red-team obfuscation detection, and benign prompt false-positive rates:
 
 ```bash
+# 1. Run pattern detector unit tests
 python backend/test_pattern_detector.py
+
+# 2. Run red-team obfuscation probe suite (updates coverage_results.json)
+python backend/tests/test_redteam.py
+
+# 3. Run benign prompt false-positive benchmark suite (updates coverage_results.json)
+python backend/tests/test_benign.py
 ```
 
 ---
