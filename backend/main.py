@@ -1,11 +1,16 @@
+import time
+import json
+from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 from typing import Optional, List
 from corpus import most_similar
 from pattern_detector import scan_and_redact
-from db import log_check, get_recent_logs
+from db import log_check, get_recent_logs, get_metrics
+
+RESULTS_FILE = Path(__file__).parent / "coverage_results.json"
 
 app = FastAPI(title="Redactor API")
 
@@ -60,6 +65,36 @@ def get_dashboard():
             margin-bottom: 20px;
             font-weight: 600;
         }
+        .stats-bar {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+        .stat-card {
+            background-color: #141414;
+            border: 1px solid #222222;
+            border-radius: 8px;
+            padding: 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+        .stat-label {
+            color: #888888;
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            font-weight: 500;
+        }
+        .stat-value {
+            color: #ffffff;
+            font-size: 22px;
+            font-weight: 700;
+            font-family: monospace, system-ui;
+        }
+        .val-block { color: #e57373; }
+        .val-redact { color: #ffb74d; }
         .table-container {
             overflow-x: auto;
             border-radius: 8px;
@@ -110,6 +145,26 @@ def get_dashboard():
 </head>
 <body>
     <h1>Redactor (Semantic AI Leak Detection - Live Protection Log)</h1>
+
+    <div class="stats-bar">
+        <div class="stat-card">
+            <span class="stat-label">Total Checks</span>
+            <span class="stat-value" id="stat-total">0</span>
+        </div>
+        <div class="stat-card">
+            <span class="stat-label">Block Rate</span>
+            <span class="stat-value val-block" id="stat-block-rate">0%</span>
+        </div>
+        <div class="stat-card">
+            <span class="stat-label">Redact Rate</span>
+            <span class="stat-value val-redact" id="stat-redact-rate">0%</span>
+        </div>
+        <div class="stat-card">
+            <span class="stat-label">Avg Latency</span>
+            <span class="stat-value" id="stat-latency">0 ms</span>
+        </div>
+    </div>
+
     <div class="table-container">
         <table>
             <thead>
@@ -126,7 +181,46 @@ def get_dashboard():
         </table>
     </div>
 
+    <details class="coverage-section" style="margin-top: 32px; border: 1px solid #222; border-radius: 8px; padding: 16px; background: #141414;">
+        <summary style="cursor: pointer; font-weight: 600; font-size: 16px; color: #ffffff;">
+            Detection Coverage Report
+        </summary>
+        <div style="margin-top: 16px;">
+            <p id="coverage-summary" style="color: #89b4fa; font-weight: 500; font-size: 14px; margin-bottom: 16px;">Loading coverage results...</p>
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Probe Test Case</th>
+                            <th>Regex</th>
+                            <th>Semantic</th>
+                            <th>Action</th>
+                            <th>Detail</th>
+                        </tr>
+                    </thead>
+                    <tbody id="coverage-body">
+                        <tr><td colspan="6" style="text-align:center; color:#666;">No coverage data available</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </details>
+
     <script>
+        async function fetchMetrics() {
+            try {
+                const res = await fetch('/metrics');
+                const data = await res.json();
+                document.getElementById('stat-total').textContent = data.total_checks || 0;
+                document.getElementById('stat-block-rate').textContent = (data.rates ? data.rates.block_rate_pct : 0) + '%';
+                document.getElementById('stat-redact-rate').textContent = (data.rates ? data.rates.redact_rate_pct : 0) + '%';
+                document.getElementById('stat-latency').textContent = (data.latency ? data.latency.avg_ms : 0) + ' ms';
+            } catch (err) {
+                console.error('Error fetching metrics:', err);
+            }
+        }
+
         async function fetchLogs() {
             try {
                 const res = await fetch('/logs');
@@ -156,8 +250,46 @@ def get_dashboard():
             }
         }
 
-        fetchLogs();
-        setInterval(fetchLogs, 5000);
+        async function fetchCoverage() {
+            try {
+                const res = await fetch('/coverage');
+                if (!res.ok) return;
+                const data = await res.json();
+                
+                if (data.summary_line) {
+                    document.getElementById('coverage-summary').textContent = data.summary_line;
+                }
+                
+                if (data.redteam && data.redteam.cases) {
+                    const tbody = document.getElementById('coverage-body');
+                    tbody.innerHTML = data.redteam.cases.map(c => {
+                        const actionClass = `action-${c.action.toLowerCase()}`;
+                        const badgeClass = `badge-${c.action.toLowerCase()}`;
+                        return `
+                            <tr class="${actionClass}">
+                                <td>${c.id}</td>
+                                <td>${c.name}</td>
+                                <td>${c.regex}</td>
+                                <td>${c.semantic}</td>
+                                <td><span class="badge ${badgeClass}">${c.action}</span></td>
+                                <td>${c.detail}</td>
+                            </tr>
+                        `;
+                    }).join('');
+                }
+            } catch (err) {
+                console.error('Error fetching coverage:', err);
+            }
+        }
+
+        function refreshData() {
+            fetchMetrics();
+            fetchLogs();
+        }
+
+        refreshData();
+        fetchCoverage();
+        setInterval(refreshData, 5000);
     </script>
 </body>
 </html>"""
@@ -169,8 +301,24 @@ def get_logs():
     return get_recent_logs(limit=50)
 
 
+@app.get("/metrics")
+def get_metrics_endpoint():
+    return get_metrics()
+
+
+@app.get("/coverage")
+def get_coverage_endpoint():
+    if RESULTS_FILE.exists():
+        try:
+            return JSONResponse(content=json.loads(RESULTS_FILE.read_text(encoding="utf-8")))
+        except Exception:
+            pass
+    return JSONResponse(content={"summary_line": "No coverage results recorded yet.", "redteam": {"cases": []}})
+
+
 @app.post("/check", response_model=CheckResponse)
 def check_text(request: CheckRequest):
+    t0 = time.perf_counter()
     input_text = request.text
     input_len = len(input_text)
 
@@ -180,6 +328,8 @@ def check_text(request: CheckRequest):
     # Semantic similarity check
     doc_name, score = most_similar(input_text)
     is_semantic_match = score > 0.45
+
+    latency_ms = round((time.perf_counter() - t0) * 1000, 2)
 
     matches = [
         MatchSpan(
@@ -225,7 +375,7 @@ def check_text(request: CheckRequest):
         else:
             reason = "semantic match"
 
-        log_check(input_len, action, reason, matched_doc, reason_detail)
+        log_check(input_len, action, reason, matched_doc, reason_detail, latency_ms)
         return CheckResponse(
             action=action,
             reason=reason,
@@ -249,7 +399,7 @@ def check_text(request: CheckRequest):
             reason = "semantic match"
             redacted_text = "[REDACTED: semantic match]"
 
-        log_check(input_len, action, reason, matched_doc, reason_detail)
+        log_check(input_len, action, reason, matched_doc, reason_detail, latency_ms)
         return CheckResponse(
             action=action,
             reason=reason,
@@ -261,7 +411,7 @@ def check_text(request: CheckRequest):
 
     action = "allow"
     reason = "no match"
-    log_check(input_len, action, reason, None, None)
+    log_check(input_len, action, reason, None, None, latency_ms)
     return CheckResponse(
         action=action,
         reason=reason,

@@ -1,0 +1,68 @@
+{
+  "last_updated": "2026-08-29T14:07:46.118529+00:00",
+  "redteam": {
+    "total": 6,
+    "regex_hits": 1,
+    "semantic_hits": 2,
+    "blocked": 0,
+    "redacted": 3,
+    "allowed": 3,
+    "cases": [
+      {
+        "id": 1,
+        "name": "Secret with inserted whitespace",
+        "regex": "MISS",
+        "semantic": "MISS",
+        "action": "ALLOW",
+        "detail": "No match"
+      },
+      {
+        "id": 2,
+        "name": "Secret described in prose",
+        "regex": "MISS",
+        "semantic": "HIT",
+        "action": "REDACT",
+        "detail": "45% security_credentials.txt"
+      },
+      {
+        "id": 3,
+        "name": "Base64-encoded key snippet",
+        "regex": "HIT",
+        "semantic": "MISS",
+        "action": "REDACT",
+        "detail": "generic_secret_assignment"
+      },
+      {
+        "id": 4,
+        "name": "Leetspeak password substitution",
+        "regex": "MISS",
+        "semantic": "MISS",
+        "action": "ALLOW",
+        "detail": "No match"
+      },
+      {
+        "id": 5,
+        "name": "Paraphrased corpus sentence",
+        "regex": "MISS",
+        "semantic": "HIT",
+        "action": "REDACT",
+        "detail": "62% acquisition_memo.txt"
+      },
+      {
+        "id": 6,
+        "name": "Secret split across two sentences",
+        "regex": "MISS",
+        "semantic": "MISS",
+        "action": "ALLOW",
+        "detail": "No match"
+      }
+    ]
+  },
+  "summary_line": "Catches 3/6 obfuscation techniques via layers; 28/28 benign prompts correctly allowed.",
+  "benign": {
+    "total": 28,
+    "passed": 28,
+    "false_positives_count": 0,
+    "false_positives": []
+  }
+}
