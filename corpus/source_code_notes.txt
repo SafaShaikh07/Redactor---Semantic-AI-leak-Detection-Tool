@@ -1,0 +1,7 @@
+CONFIDENTIAL - ENGINEERING
+Our recommendation ranking algorithm uses a proprietary weighted scoring 
+formula combining user engagement history, a decay factor of 0.87 applied 
+every 48 hours, and a collaborative filtering model trained on 18 months 
+of interaction data. The core ranking function lives in ranking_engine.py 
+and must not be shared outside the ML team. Competitors have not been 
+able to replicate our click-through rate improvements using public methods.
