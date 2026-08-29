@@ -50,7 +50,7 @@ PATTERNS = [
     ("ssn", re.compile(r"\b\d{3}-\d{2}-\d{4}\b"), "[REDACTED: ssn]"),
     ("credit_card", re.compile(r"\b(?:\d[ -]*?){13,19}\b"), "luhn_callback"),
     ("aadhaar_number", re.compile(r"(?<!\d\s)(?<!\d-)(?<!\d)[2-9]\d{3}[\s-]?\d{4}[\s-]?\d{4}(?![\s-]?\d)"), "[REDACTED: aadhaar_number]"),
-    ("phone_number", re.compile(r"\b(?:\+\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3,4}[-.\s]?\d{4}\b"), "[REDACTED: phone_number]"),
+    ("phone_number", re.compile(r"(?<!\d)(?:\+\d{1,3}[-.\s]?)?(?:\b[6-9]\d{4}[-.\s]?\d{5}\b|\(?\d{3}\)?[-.\s]?\d{3,4}[-.\s]?\d{4}\b)(?!\d)"), "[REDACTED: phone_number]"),
     ("ip_address", re.compile(r"\b(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(?:\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}\b"), "ip_callback"),
     (
         "crypto_wallet",

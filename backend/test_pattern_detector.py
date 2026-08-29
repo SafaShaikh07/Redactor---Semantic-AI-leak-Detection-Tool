@@ -52,6 +52,19 @@ def test_phone_number():
     assert "phone_number" in reasons
     assert "[REDACTED: phone_number]" in redacted
 
+    # Indian space-separated format regression tests (+91 XXXXX XXXXX)
+    in_text1 = "Contact +91 91234 56789 for support"
+    r1, h1, re1, s1 = scan_and_redact(in_text1)
+    assert h1
+    assert "phone_number" in re1
+    assert "[REDACTED: phone_number]" in r1
+
+    in_text2 = "Mobile: +91 98765 43210"
+    r2, h2, re2, s2 = scan_and_redact(in_text2)
+    assert h2
+    assert "phone_number" in re2
+    assert "[REDACTED: phone_number]" in r2
+
 def test_generic_secret_assignment():
     text = "MY_TOKEN=abc12345\nDB_PASSWORD: supersecretpass"
     redacted, has_secrets, reasons, spans = scan_and_redact(text)
