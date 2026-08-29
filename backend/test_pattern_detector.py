@@ -80,6 +80,33 @@ def test_private_key_block():
     assert "private_key_block" in reasons
     assert "[REDACTED: private_key_block]" in redacted
 
+def test_cvv():
+    text1 = "My CVV 447 for authorization"
+    r1, h1, re1, s1 = scan_and_redact(text1)
+    assert h1
+    assert "cvv" in re1
+    assert "My CVV [REDACTED: cvv] for authorization" in r1
+
+    text2 = "Security code: CVV: 123"
+    r2, h2, re2, s2 = scan_and_redact(text2)
+    assert h2
+    assert "cvv" in re2
+
+    # Unlabeled digits must NOT match
+    text3 = "the code is 447"
+    r3, h3, re3, s3 = scan_and_redact(text3)
+    assert not h3
+    assert "cvv" not in re3
+
+    # Both credit card and CVV in same prompt
+    combo_text = "Card 4532 0151 1283 0366 with CVV 447"
+    rc, hc, rec, sc = scan_and_redact(combo_text)
+    assert hc
+    assert "credit_card" in rec
+    assert "cvv" in rec
+    assert set(rec) == {"credit_card", "cvv"}
+    assert "Card [REDACTED: credit_card] with CVV [REDACTED: cvv]" in rc
+
 def test_credit_card():
     # Valid Visa card vs invalid number
     text = "Valid: 4532 0151 1283 0366, Invalid: 1234 5678 9012 3456"
@@ -180,6 +207,7 @@ if __name__ == "__main__":
     test_generic_secret_assignment()
     test_private_key_block()
     test_credit_card()
+    test_cvv()
     test_ssn()
     test_aadhaar_number()
     test_ip_address()

@@ -49,6 +49,11 @@ PATTERNS = [
     ("pan_number", re.compile(r"\b[A-Z]{5}[0-9]{4}[A-Z]\b"), "[REDACTED: pan_number]"),
     ("ssn", re.compile(r"\b\d{3}-\d{2}-\d{4}\b"), "[REDACTED: ssn]"),
     ("credit_card", re.compile(r"\b(?:\d[ -]*?){13,19}\b"), "luhn_callback"),
+    (
+        "cvv",
+        re.compile(r"\b((?:CVV2?|CVC|security\s+code|card\s+verification)\s*[:=]?\s*)(\d{3,4})\b", re.IGNORECASE),
+        "[REDACTED: cvv]"
+    ),
     ("aadhaar_number", re.compile(r"(?<!\d)(?<!\d\s)(?<!\d-)\b[2-9]\d{3}[\s-]?\d{4}[\s-]?\d{4}\b(?!\d)(?![\s-]?\d)"), "[REDACTED: aadhaar_number]"),
     ("phone_number", re.compile(r"(?<!\d)(?:\+\d{1,3}[-.\s]?)?(?:\b[6-9]\d{4}[-.\s]?\d{5}\b|\(?\d{3}\)?[-.\s]?\d{3,4}[-.\s]?\d{4}\b)(?!\d)"), "[REDACTED: phone_number]"),
     ("ip_address", re.compile(r"\b(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(?:\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}\b"), "ip_callback"),
@@ -103,7 +108,7 @@ def get_match_spans(text: str) -> List[dict]:
 
         found_matches = []
         for match in matches_orig:
-            found_matches.append((match.start(), match.end(), match.group(0)))
+            found_matches.append((match, match.start(), match.end(), match.group(0)))
 
         for match in matches_norm:
             if not norm_map or match.start() >= len(norm_map):
@@ -116,10 +121,10 @@ def get_match_spans(text: str) -> List[dict]:
                 orig_end = norm_map[orig_end_idx] + 1
             matched_str = text[orig_start:orig_end]
 
-            if not any(abs(m[0] - orig_start) <= 2 and abs(m[1] - orig_end) <= 2 for m in found_matches):
-                found_matches.append((orig_start, orig_end, matched_str))
+            if not any(abs(m[1] - orig_start) <= 2 and abs(m[2] - orig_end) <= 2 for m in found_matches):
+                found_matches.append((match, orig_start, orig_end, matched_str))
 
-        for m_start, m_end, matched_str in found_matches:
+        for match_obj, m_start, m_end, matched_str in found_matches:
             # Check if this span overlaps with any already claimed span
             if any(ranges_overlap(m_start, m_end, existing["start"], existing["end"]) for existing in spans):
                 continue
@@ -138,6 +143,13 @@ def get_match_spans(text: str) -> List[dict]:
                     while val_start < m_end and text[val_start] in (" ", "\t"):
                         val_start += 1
                     spans.append({"start": val_start, "end": m_end, "reason": reason, "severity": "redact"})
+                else:
+                    spans.append({"start": m_start, "end": m_end, "reason": reason, "severity": "redact"})
+            elif reason == "cvv":
+                if len(match_obj.groups()) >= 2 and match_obj.start(2) != -1:
+                    val_start = m_start + (match_obj.start(2) - match_obj.start())
+                    val_end = m_start + (match_obj.end(2) - match_obj.start())
+                    spans.append({"start": val_start, "end": val_end, "reason": reason, "severity": "redact"})
                 else:
                     spans.append({"start": m_start, "end": m_end, "reason": reason, "severity": "redact"})
             elif reason == "db_connection_string":
