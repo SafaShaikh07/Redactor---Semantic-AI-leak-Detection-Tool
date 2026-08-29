@@ -173,7 +173,7 @@
           triggerSubmit(promptElement);
         }, 800);
       } else if (data.action === 'block') {
-        updateRiskIndicator('block', promptElement);
+        updateRiskIndicator('block', promptElement, data.reason_detail);
         updateTextareaHighlights(promptElement, data.matches || [], 'block');
         const reasonMsg = data.reason ? `Blocked: ${data.reason}` : 'Prompt blocked by Redactor';
         createToast(reasonMsg, 4000, true);
@@ -280,7 +280,7 @@
   }
 
   // Update persistent risk indicator in bottom corner of textarea
-  function updateRiskIndicator(action, promptElement) {
+  function updateRiskIndicator(action, promptElement, reasonDetail) {
     let indicator = document.getElementById('redactor-risk-indicator');
     if (!indicator) {
       indicator = document.createElement('div');
@@ -302,7 +302,8 @@
         z-index: 9999;
         box-shadow: 0 2px 6px rgba(0,0,0,0.25);
         transition: all 0.2s ease;
-        pointer-events: none;
+        pointer-events: auto;
+        cursor: help;
       `;
     }
 
@@ -340,6 +341,7 @@
       labelText = 'Will be blocked';
     }
 
+    indicator.title = reasonDetail || labelText;
     indicator.innerHTML = `<span style="width:7px; height:7px; border-radius:50%; background-color:${dotColor}; display:inline-block;"></span><span>${labelText}</span>`;
   }
 
@@ -367,7 +369,7 @@
         });
         if (response.ok) {
           const data = await response.json();
-          updateRiskIndicator(data.action, promptElement);
+          updateRiskIndicator(data.action, promptElement, data.reason_detail);
           updateTextareaHighlights(promptElement, data.matches || [], data.action);
         }
       } catch (err) {

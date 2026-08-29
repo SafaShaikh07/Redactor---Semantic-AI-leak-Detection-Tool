@@ -35,6 +35,7 @@ class CheckResponse(BaseModel):
     matched_doc: Optional[str] = None
     redacted_text: Optional[str] = None
     matches: List[MatchSpan] = []
+    reason_detail: Optional[str] = None
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -140,11 +141,12 @@ def get_dashboard():
                     const badgeClass = `badge-${log.action.toLowerCase()}`;
                     const timeStr = log.timestamp ? new Date(log.timestamp).toLocaleTimeString() : '-';
                     const docStr = log.matched_doc || '-';
+                    const detailStr = (log.reason_detail || log.reason || '').replace(/"/g, '&quot;');
                     return `
                         <tr class="${actionClass}">
                             <td>${timeStr}</td>
                             <td><span class="badge ${badgeClass}">${log.action}</span></td>
-                            <td>${log.reason}</td>
+                            <td title="${detailStr}" style="cursor: help; text-decoration: underline dotted #666;">${log.reason}</td>
                             <td>${docStr}</td>
                         </tr>
                     `;
@@ -197,6 +199,18 @@ def check_text(request: CheckRequest):
             severity="redact"
         ))
 
+    # Construct structured details
+    detail_parts = []
+    if raw_matches:
+        pattern_details = [f"{m['reason']} ({m['end'] - m['start']} chars)" for m in raw_matches]
+        detail_parts.append("; ".join(pattern_details))
+
+    if is_semantic_match:
+        sim_pct = int(score * 100)
+        detail_parts.append(f"{sim_pct}% match to {doc_name}")
+
+    reason_detail = " | ".join(detail_parts) if detail_parts else None
+
     if has_secrets or is_semantic_match:
         action = "redact"
         matched_doc = doc_name if is_semantic_match else None
@@ -211,22 +225,24 @@ def check_text(request: CheckRequest):
             reason = "semantic match"
             redacted_text = "[REDACTED: semantic match]"
 
-        log_check(input_len, action, reason, matched_doc)
+        log_check(input_len, action, reason, matched_doc, reason_detail)
         return CheckResponse(
             action=action,
             reason=reason,
             matched_doc=matched_doc,
             redacted_text=redacted_text,
-            matches=matches
+            matches=matches,
+            reason_detail=reason_detail
         )
 
     action = "allow"
     reason = "no match"
-    log_check(input_len, action, reason, None)
+    log_check(input_len, action, reason, None, None)
     return CheckResponse(
         action=action,
         reason=reason,
         matched_doc=None,
         redacted_text=None,
-        matches=[]
+        matches=[],
+        reason_detail=None
     )
