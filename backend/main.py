@@ -169,14 +169,13 @@ def get_dashboard():
         <table>
             <thead>
                 <tr>
-                    <th>Time</th>
-                    <th>Action</th>
-                    <th>Reason</th>
-                    <th>Matched Doc</th>
+                    <th style="width: 20%;">Time</th>
+                    <th style="width: 20%;">Action</th>
+                    <th style="width: 60%;">Reason</th>
                 </tr>
             </thead>
             <tbody id="logs-body">
-                <tr><td colspan="4" style="text-align:center; color:#666;">Loading logs...</td></tr>
+                <tr><td colspan="3" style="text-align:center; color:#666;">Loading logs...</td></tr>
             </tbody>
         </table>
     </div>
@@ -227,21 +226,19 @@ def get_dashboard():
                 const data = await res.json();
                 const tbody = document.getElementById('logs-body');
                 if (!data || data.length === 0) {
-                    tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; color:#666;">No logs available</td></tr>';
+                    tbody.innerHTML = '<tr><td colspan="3" style="text-align:center; color:#666;">No logs available</td></tr>';
                     return;
                 }
                 tbody.innerHTML = data.map(log => {
                     const actionClass = `action-${log.action.toLowerCase()}`;
                     const badgeClass = `badge-${log.action.toLowerCase()}`;
                     const timeStr = log.timestamp ? new Date(log.timestamp).toLocaleTimeString() : '-';
-                    const docStr = log.matched_doc || '-';
                     const detailStr = (log.reason_detail || log.reason || '').replace(/"/g, '&quot;');
                     return `
                         <tr class="${actionClass}">
                             <td>${timeStr}</td>
                             <td><span class="badge ${badgeClass}">${log.action}</span></td>
                             <td title="${detailStr}" style="cursor: help; text-decoration: underline dotted #666;">${log.reason}</td>
-                            <td>${docStr}</td>
                         </tr>
                     `;
                 }).join('');
