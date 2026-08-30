@@ -10,7 +10,7 @@ It acts as a real-time local security guard, running both **deep pattern detecti
 
 - **Chrome Extension (MV3)**:
   - Hooks directly into ChatGPT prompt boxes (`chatgpt.com`).
-  - **Live Typing Risk Indicator**: Shows a real-time status badge (🟢 Clear, 🟡 Sensitive content detected, 🔴 Will be blocked) debounced ~600ms while you type with interactive hover explanations.
+  - **Live Typing Risk Indicator**: Shows a real-time coloured status badge (Clear, Sensitive content detected Will be blocked) debounced ~600ms while you type with interactive hover explanations.
   - **Live Inline Preview Overlay**: Highlights sensitive matches inline over the prompt box in real-time.
   - **Auto-Redaction & Blocking**: Replaces sensitive spans with `[REDACTED: reason]` before sending, or blocks critical prompts completely.
 
