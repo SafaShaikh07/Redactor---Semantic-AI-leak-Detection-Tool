@@ -13,6 +13,22 @@
   'use strict';
 
   let isBypassingCheck = false;
+  let rateLimitUntil = 0;
+
+  async function parseRetryAfter(response) {
+    const retryHeader = response.headers ? response.headers.get('Retry-After') : null;
+    if (retryHeader) {
+      const parsed = parseInt(retryHeader, 10);
+      if (!isNaN(parsed) && parsed > 0) return parsed;
+    }
+    try {
+      const data = await response.clone().json();
+      if (data && data.retry_after_seconds) {
+        return data.retry_after_seconds;
+      }
+    } catch (_) {}
+    return 2;
+  }
 
   // Create toast element container
   function createToast(message, duration = 3000, isError = false) {
@@ -143,19 +159,59 @@
     e.stopPropagation();
     e.stopImmediatePropagation();
 
-    try {
-      const response = await fetch('http://localhost:8000/check', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ text })
-      });
+    const maxRetries = 2;
+    let response = null;
 
-      if (!response.ok) {
-        throw new Error(`Server returned ${response.status}`);
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      if (Date.now() < rateLimitUntil) {
+        const waitMs = Math.max(100, rateLimitUntil - Date.now());
+        if (attempt === 0) {
+          createToast('Rate limit active. Briefly pausing before check...', 2000, false);
+        }
+        await new Promise(resolve => setTimeout(resolve, waitMs));
       }
 
+      try {
+        response = await fetch('http://localhost:8000/check', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ text })
+        });
+
+        if (response.status === 429) {
+          const retrySec = await parseRetryAfter(response);
+          rateLimitUntil = Date.now() + (retrySec * 1000);
+          if (attempt < maxRetries) {
+            createToast(`Rate limit exceeded. Retrying check in ${retrySec}s...`, retrySec * 1000, false);
+            await new Promise(resolve => setTimeout(resolve, retrySec * 1000 + 100));
+            continue;
+          }
+        }
+
+        break;
+      } catch (err) {
+        if (attempt === maxRetries) {
+          console.error('[Redactor] Error checking prompt:', err);
+          createToast('Redactor backend offline. Sending normally.', 3000, true);
+          triggerSubmit(promptElement);
+          return;
+        }
+      }
+    }
+
+    if (!response || !response.ok) {
+      if (response && response.status === 429) {
+        createToast('Rate limit exceeded after retries. Please wait a moment.', 3000, true);
+        return;
+      }
+      createToast('Redactor backend offline. Sending normally.', 3000, true);
+      triggerSubmit(promptElement);
+      return;
+    }
+
+    try {
       const data = await response.json();
 
       if (data.action === 'allow') {
@@ -184,9 +240,7 @@
         triggerSubmit(promptElement);
       }
     } catch (err) {
-      console.error('[Redactor] Error checking prompt:', err);
-      // Fail-open or prompt user if server is offline
-      createToast('Redactor backend offline. Sending normally.', 3000, true);
+      console.error('[Redactor] Error processing response:', err);
       triggerSubmit(promptElement);
     }
   }
@@ -360,13 +414,25 @@
       return;
     }
 
+    if (Date.now() < rateLimitUntil) {
+      return;
+    }
+
     debounceTimer = setTimeout(async () => {
+      if (Date.now() < rateLimitUntil) return;
+
       try {
         const response = await fetch('http://localhost:8000/check', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ text })
         });
+        if (response.status === 429) {
+          const retrySec = await parseRetryAfter(response);
+          rateLimitUntil = Date.now() + (retrySec * 1000);
+          console.warn(`[Redactor] 429 Rate limit hit on typing check. Pausing live checks for ${retrySec}s.`);
+          return;
+        }
         if (response.ok) {
           const data = await response.json();
           updateRiskIndicator(data.action, promptElement, data.reason_detail);

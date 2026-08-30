@@ -1,7 +1,9 @@
 import time
 import json
+import threading
+from collections import deque
 from pathlib import Path
-from fastapi import FastAPI
+from fastapi import FastAPI, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
@@ -11,6 +13,65 @@ from pattern_detector import scan_and_redact
 from db import log_check, get_recent_logs, get_metrics
 
 RESULTS_FILE = Path(__file__).parent / "coverage_results.json"
+
+
+class SlidingWindowRateLimiter:
+    def __init__(self, limit: int = 30, window_seconds: float = 10.0):
+        self.limit = limit
+        self.window_seconds = window_seconds
+        self.timestamps = deque()
+        self._lock = threading.Lock()
+
+    def _cleanup(self, now: float):
+        cutoff = now - self.window_seconds
+        while self.timestamps and self.timestamps[0] <= cutoff:
+            self.timestamps.popleft()
+
+    def check_request(self) -> tuple[bool, dict]:
+        now = time.time()
+        with self._lock:
+            self._cleanup(now)
+            current_count = len(self.timestamps)
+            if current_count >= self.limit:
+                oldest = self.timestamps[0]
+                retry_after = max(1, int(round(oldest + self.window_seconds - now + 0.49)))
+                reset_timestamp = oldest + self.window_seconds
+                return False, {
+                    "limit": self.limit,
+                    "window_seconds": self.window_seconds,
+                    "remaining": 0,
+                    "retry_after": retry_after,
+                    "reset_timestamp": reset_timestamp
+                }
+
+            self.timestamps.append(now)
+            remaining = self.limit - len(self.timestamps)
+            reset_timestamp = self.timestamps[0] + self.window_seconds if self.timestamps else now + self.window_seconds
+            return True, {
+                "limit": self.limit,
+                "window_seconds": self.window_seconds,
+                "remaining": remaining,
+                "retry_after": 0,
+                "reset_timestamp": reset_timestamp
+            }
+
+    def get_status(self) -> dict:
+        now = time.time()
+        with self._lock:
+            self._cleanup(now)
+            current_count = len(self.timestamps)
+            remaining = max(0, self.limit - current_count)
+            reset_in = max(0.0, round(self.timestamps[0] + self.window_seconds - now, 1)) if self.timestamps else 0.0
+            return {
+                "limit": self.limit,
+                "window_seconds": self.window_seconds,
+                "current_requests": current_count,
+                "remaining": remaining,
+                "reset_in_seconds": reset_in
+            }
+
+
+rate_limiter = SlidingWindowRateLimiter(limit=30, window_seconds=10.0)
 
 app = FastAPI(title="Redactor API")
 
@@ -163,6 +224,10 @@ def get_dashboard():
             <span class="stat-label">Avg Latency</span>
             <span class="stat-value" id="stat-latency">0 ms</span>
         </div>
+        <div class="stat-card">
+            <span class="stat-label">Rate Limit Remaining</span>
+            <span class="stat-value" id="stat-rate-remaining">30 / 30</span>
+        </div>
     </div>
 
     <div class="table-container">
@@ -215,6 +280,9 @@ def get_dashboard():
                 document.getElementById('stat-block-rate').textContent = (data.rates ? data.rates.block_rate_pct : 0) + '%';
                 document.getElementById('stat-redact-rate').textContent = (data.rates ? data.rates.redact_rate_pct : 0) + '%';
                 document.getElementById('stat-latency').textContent = (data.latency ? data.latency.avg_ms : 0) + ' ms';
+                if (data.rate_limit) {
+                    document.getElementById('stat-rate-remaining').textContent = `${data.rate_limit.remaining} / ${data.rate_limit.limit}`;
+                }
             } catch (err) {
                 console.error('Error fetching metrics:', err);
             }
@@ -300,7 +368,9 @@ def get_logs():
 
 @app.get("/metrics")
 def get_metrics_endpoint():
-    return get_metrics()
+    metrics = get_metrics()
+    metrics["rate_limit"] = rate_limiter.get_status()
+    return metrics
 
 
 @app.get("/coverage")
@@ -314,7 +384,31 @@ def get_coverage_endpoint():
 
 
 @app.post("/check", response_model=CheckResponse)
-def check_text(request: CheckRequest):
+def check_text(request: CheckRequest, response: Response):
+    allowed, rate_info = rate_limiter.check_request()
+    if not allowed:
+        return JSONResponse(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            content={
+                "error": "rate_limit_exceeded",
+                "message": f"Too many requests. Limit is {rate_info['limit']} requests per {int(rate_info['window_seconds'])} seconds.",
+                "retry_after_seconds": rate_info["retry_after"],
+                "limit": rate_info["limit"],
+                "window_seconds": rate_info["window_seconds"],
+                "remaining": 0
+            },
+            headers={
+                "X-RateLimit-Limit": str(rate_info["limit"]),
+                "X-RateLimit-Remaining": "0",
+                "X-RateLimit-Reset": str(int(rate_info["reset_timestamp"])),
+                "Retry-After": str(rate_info["retry_after"])
+            }
+        )
+
+    response.headers["X-RateLimit-Limit"] = str(rate_info["limit"])
+    response.headers["X-RateLimit-Remaining"] = str(rate_info["remaining"])
+    response.headers["X-RateLimit-Reset"] = str(int(rate_info["reset_timestamp"]))
+
     t0 = time.perf_counter()
     input_text = request.text
     input_len = len(input_text)
