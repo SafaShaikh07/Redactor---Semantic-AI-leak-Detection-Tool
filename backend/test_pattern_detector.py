@@ -17,6 +17,22 @@ def test_api_key():
     assert "[REDACTED: api_key]" in p_redacted
     assert p_spans[0]["reason"] == "api_key"
 
+    fragment_text = "Our key starts with sk-proj-8fJ2... and continues kLmN9pQrStUv..."
+    fragment_redacted, fragment_found, fragment_reasons, _ = scan_and_redact(fragment_text)
+    assert fragment_found
+    assert "api_key" in fragment_reasons
+    assert "sk-proj-8fJ2" not in fragment_redacted
+    assert "kLmN9pQrStUv" not in fragment_redacted
+
+    # Stripe test/live secret-key regression test
+    stripe_text = "My API key is sk_test_1234567890abcdef1234567890abcdef."
+    s_redacted, s_has_secrets, s_reasons, s_spans = scan_and_redact(stripe_text)
+    assert s_has_secrets
+    assert "api_key" in s_reasons
+    assert "sk_test_" not in s_redacted
+    assert "[REDACTED: api_key]" in s_redacted
+    assert s_spans[0]["reason"] == "api_key"
+
 def test_email():
     text = "Contact me at user@example.com for info"
     redacted, has_secrets, reasons, spans = scan_and_redact(text)
@@ -37,6 +53,17 @@ def test_db_connection_string():
     assert has_secrets
     assert "db_connection_string" in reasons
     assert "postgresql://[REDACTED: db_connection_string]/Customer_Master" in redacted
+
+    credential_text = (
+        "Password: ProdDB@987654\n"
+        "Connection string: postgresql://admin:ProdDB@987654@localhost:5432/customerdb"
+    )
+    credential_redacted, credential_found, credential_reasons, credential_spans = scan_and_redact(credential_text)
+    assert credential_found
+    assert "generic_secret_assignment" in credential_reasons
+    assert "db_connection_string" in credential_reasons
+    assert any(span["severity"] == "block" for span in credential_spans)
+    assert "ProdDB@987654" not in credential_redacted
 
 def test_pan_number():
     text = "My PAN number is ABCDE1234F."

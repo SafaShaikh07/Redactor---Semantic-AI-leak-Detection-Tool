@@ -7,7 +7,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from pattern_detector import scan_and_redact
-from corpus import most_similar
+from corpus import SEMANTIC_THRESHOLD, most_similar
 
 RESULTS_FILE = Path(__file__).parent.parent / "coverage_results.json"
 
@@ -39,8 +39,48 @@ TEST_CASES = [
     },
     {
         "id": 6,
-        "name": "Secret split across two sentences",
+        "name": "Secret split across fragments",
         "input": "Our key starts with sk-proj-8fJ2... and continues kLmN9pQrStUv...",
+    },
+    {
+        "id": 7,
+        "name": "Exact confidential Falcon reference",
+        "input": "Project Falcon is an unreleased internal initiative scheduled for launch on 15 December. Its launch timeline and project details are confidential and must not be shared externally.",
+    },
+    {
+        "id": 8,
+        "name": "Falcon mid-December paraphrase",
+        "input": "The unreleased Falcon initiative is scheduled to go live during the middle of December.",
+    },
+    {
+        "id": 9,
+        "name": "Falcon date paraphrase",
+        "input": "Our internal Falcon project is expected to launch around 15 December.",
+    },
+    {
+        "id": 10,
+        "name": "Falcon programme paraphrase",
+        "input": "The confidential Falcon programme will be introduced in mid-December.",
+    },
+    {
+        "id": 11,
+        "name": "Falcon release paraphrase",
+        "input": "The Falcon initiative is planned for release during the second half of December.",
+    },
+    {
+        "id": 12,
+        "name": "Harmless falcon bird",
+        "input": "I saw a falcon flying over the mountains during my December vacation.",
+    },
+    {
+        "id": 13,
+        "name": "General project management",
+        "input": "We need a general project management plan for our team.",
+    },
+    {
+        "id": 14,
+        "name": "Unrelated December launch",
+        "input": "A harmless public launch announcement for an unrelated product is planned for December.",
     },
 ]
 
@@ -96,7 +136,7 @@ def run_redteam_tests():
 
         # 2. Semantic check
         doc_name, score = most_similar(text)
-        is_semantic_hit = score > 0.45
+        is_semantic_hit = score >= SEMANTIC_THRESHOLD
         semantic_hit = "HIT" if is_semantic_hit else "MISS"
         if is_semantic_hit:
             semantic_caught += 1

@@ -7,7 +7,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from pattern_detector import scan_and_redact
-from corpus import most_similar
+from corpus import SEMANTIC_THRESHOLD, most_similar
 
 RESULTS_FILE = Path(__file__).parent.parent / "coverage_results.json"
 
@@ -83,7 +83,7 @@ def run_benign_tests():
 
         # 2. Semantic check
         doc_name, score = most_similar(text)
-        is_semantic_hit = score > 0.45
+        is_semantic_hit = score >= SEMANTIC_THRESHOLD
         semantic_hit = "HIT" if is_semantic_hit else "MISS"
 
         # 3. Overall action determination

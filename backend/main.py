@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 from typing import Optional, List
-from corpus import most_similar
+from corpus import SEMANTIC_THRESHOLD, analyze_semantic
 from pattern_detector import scan_and_redact
 from db import log_check, get_recent_logs, get_metrics
 
@@ -102,6 +102,27 @@ class CheckResponse(BaseModel):
     redacted_text: Optional[str] = None
     matches: List[MatchSpan] = []
     reason_detail: Optional[str] = None
+
+
+def _redact_matches(text: str, raw_matches: List[dict], semantic_result=None) -> str:
+    spans = list(raw_matches)
+    if semantic_result is not None:
+        semantic_span = {
+            "start": semantic_result.start,
+            "end": semantic_result.end,
+            "reason": "semantic match"
+        }
+        spans = [
+            match for match in spans
+            if match["end"] <= semantic_span["start"] or match["start"] >= semantic_span["end"]
+        ]
+        spans.append(semantic_span)
+
+    redacted_text = text
+    for match in sorted(spans, key=lambda item: item["start"], reverse=True):
+        replacement = f"[REDACTED: {match['reason']}]"
+        redacted_text = redacted_text[:match["start"]] + replacement + redacted_text[match["end"]:]
+    return redacted_text
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -416,9 +437,10 @@ def check_text(request: CheckRequest, response: Response):
     # Secret scanning
     secret_redacted_text, has_secrets, secret_reasons, raw_matches = scan_and_redact(input_text)
 
-    # Semantic similarity check
-    doc_name, score = most_similar(input_text)
-    is_semantic_match = score > 0.45
+    semantic_result = analyze_semantic(input_text)
+    doc_name = semantic_result.doc_name
+    score = semantic_result.score
+    is_semantic_match = score >= SEMANTIC_THRESHOLD
 
     latency_ms = round((time.perf_counter() - t0) * 1000, 2)
 
@@ -432,10 +454,10 @@ def check_text(request: CheckRequest, response: Response):
         for m in raw_matches
     ]
 
-    if is_semantic_match and not matches:
+    if is_semantic_match:
         matches.append(MatchSpan(
-            start=0,
-            end=input_len,
+            start=semantic_result.start,
+            end=semantic_result.end,
             reason="semantic match",
             severity="redact"
         ))
@@ -482,13 +504,13 @@ def check_text(request: CheckRequest, response: Response):
 
         if has_secrets and is_semantic_match:
             reason = f"secret ({', '.join(secret_reasons)}) & semantic match"
-            redacted_text = secret_redacted_text
+            redacted_text = _redact_matches(input_text, raw_matches, semantic_result)
         elif has_secrets:
             reason = ", ".join(secret_reasons)
             redacted_text = secret_redacted_text
         else:
             reason = "semantic match"
-            redacted_text = "[REDACTED: semantic match]"
+            redacted_text = _redact_matches(input_text, [], semantic_result)
 
         log_check(input_len, action, reason, matched_doc, reason_detail, latency_ms)
         return CheckResponse(

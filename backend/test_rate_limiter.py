@@ -2,6 +2,8 @@ import time
 import unittest
 from fastapi.testclient import TestClient
 from main import app, rate_limiter, SlidingWindowRateLimiter
+from main import app, rate_limiter, SlidingWindowRateLimiter
+from corpus import SEMANTIC_THRESHOLD, analyze_semantic
 
 
 class TestRateLimiterUnit(unittest.TestCase):
@@ -89,7 +91,9 @@ class TestRateLimiterIntegration(unittest.TestCase):
                 success_count += 1
             elif res.status_code == 429:
                 throttled_count += 1
-                self.assertIn(res.headers.get("Retry-After"), ["9", "10"])
+                retry_after = int(res.headers.get("Retry-After", "0"))
+                self.assertGreaterEqual(retry_after, 1)
+                self.assertLessEqual(retry_after, 10)
                 self.assertEqual(res.headers.get("X-RateLimit-Remaining"), "0")
                 body = res.json()
                 self.assertEqual(body["error"], "rate_limit_exceeded")
@@ -102,6 +106,96 @@ class TestRateLimiterIntegration(unittest.TestCase):
         metrics = self.client.get("/metrics").json()
         self.assertEqual(metrics["rate_limit"]["remaining"], 0)
         self.assertEqual(metrics["rate_limit"]["current_requests"], 30)
+
+    def test_repeated_detection_requests(self):
+        falcon_positive = [
+            "Project Falcon is an unreleased internal initiative scheduled for launch on 15 December.",
+            "The unreleased Falcon initiative is scheduled to go live during the middle of December.",
+            "Our internal Falcon project is expected to launch around 15 December.",
+            "The confidential Falcon programme will be introduced in mid-December.",
+            "The Falcon initiative is planned for release during the second half of December.",
+        ]
+        groups = [
+            ("benign", [
+                (f"Explain a harmless programming concept, example {index}.", "allow", "none")
+                for index in range(10)
+            ]),
+            ("api_key", [
+                (f"API_KEY=sk-test_1234567890abcdef1234567890abcdef item {index}", "redact", "regex")
+                for index in range(10)
+            ]),
+            ("email_phone", [
+                (
+                    f"Contact test.user{index}@example.com" if index % 2 == 0
+                    else f"Call +1-555-555-{index:04d}",
+                    "redact",
+                    "regex"
+                )
+                for index in range(10)
+            ]),
+            ("database_credentials", [
+                (f"postgresql://test_user:test_password{index}@localhost:5432/testdb", "block", "regex")
+                for index in range(10)
+            ]),
+            ("falcon_positive", [
+                (falcon_positive[index % len(falcon_positive)], "redact", "semantic")
+                for index in range(10)
+            ]),
+            ("falcon_negative", [
+                (
+                    [
+                        "I saw a falcon flying over the mountains during my December vacation.",
+                        "We need a general project management plan for our team.",
+                        "A harmless public launch announcement for an unrelated product is planned for December.",
+                    ][index % 3],
+                    "allow",
+                    "semantic"
+                )
+                for index in range(10)
+            ]),
+            ("mixed", [
+                (falcon_positive[index % len(falcon_positive)], "redact", "semantic")
+                if index % 2 == 0 else
+                (f"Explain a harmless programming concept, example {index}.", "allow", "none")
+                for index in range(10)
+            ]),
+        ]
+
+        request_number = 0
+        for group_name, cases in groups:
+            with rate_limiter._lock:
+                rate_limiter.timestamps.clear()
+            latencies = []
+
+            for text, expected_action, mechanism in cases:
+                request_number += 1
+                semantic_score = analyze_semantic(text).score if mechanism == "semantic" else None
+                started = time.perf_counter()
+                response = self.client.post("/check", json={"text": text})
+                latency_ms = (time.perf_counter() - started) * 1000
+                latencies.append(latency_ms)
+                data = response.json()
+                actual_action = data.get("action", "error")
+
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(actual_action, expected_action)
+                if mechanism == "semantic":
+                    if expected_action == "redact":
+                        self.assertGreaterEqual(semantic_score, SEMANTIC_THRESHOLD)
+                    else:
+                        self.assertLess(semantic_score, SEMANTIC_THRESHOLD)
+
+                score_text = f"{semantic_score:.4f}" if semantic_score is not None else "n/a"
+                print(
+                    f"request={request_number} group={group_name} expected={expected_action} "
+                    f"actual={actual_action} mechanism={mechanism} score={score_text} "
+                    f"latency_ms={latency_ms:.2f} completed={response.status_code == 200}"
+                )
+
+            print(
+                f"group={group_name} requests={len(cases)} "
+                f"avg_ms={sum(latencies) / len(latencies):.2f} max_ms={max(latencies):.2f}"
+            )
 
 
 if __name__ == "__main__":

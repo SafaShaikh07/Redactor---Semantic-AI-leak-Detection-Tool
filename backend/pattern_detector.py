@@ -28,7 +28,21 @@ def get_severity(reason: str, matched_text: str) -> str:
     return "redact"
 
 PATTERNS = [
-    ("api_key", re.compile(r"sk-(?:[a-zA-Z0-9]+-)?[a-zA-Z0-9_-]{20,}"), "[REDACTED: api_key]"),
+    (
+        "api_key",
+        re.compile(r"(?:sk-(?:[a-zA-Z0-9]+-)?[a-zA-Z0-9_-]{20,}|sk_(?:test|live)_[a-zA-Z0-9_-]{20,})"),
+        "[REDACTED: api_key]"
+    ),
+    (
+        "api_key",
+        re.compile(
+            r"\bsk-(?:(?:proj|ant|live|test)-)?[a-zA-Z0-9_-]{4,}\.{2,}"
+            r"(?:\s+(?:(?:and\s+)?continues?(?:\s+with)?|it\s+continues?(?:\s+with)?)"
+            r"\s+[a-zA-Z0-9_-]{4,}\.{2,})?",
+            re.IGNORECASE
+        ),
+        "[REDACTED: api_key]"
+    ),
     (
         "db_connection_string",
         re.compile(r"(postgresql|postgres|mysql|mongodb|redis)://[^\s/@:]+(?::[^\s/@]+)?@[^\s/@:]+(?::\d+)?", re.IGNORECASE),

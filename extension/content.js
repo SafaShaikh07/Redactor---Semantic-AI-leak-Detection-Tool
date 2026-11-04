@@ -15,18 +15,44 @@
   let isBypassingCheck = false;
   let rateLimitUntil = 0;
 
+  function requestCheck(text) {
+    return new Promise((resolve, reject) => {
+      if (typeof chrome === 'undefined' || !chrome.runtime || !chrome.runtime.sendMessage) {
+        reject(new Error('Redactor extension messaging is unavailable.'));
+        return;
+      }
+
+      let settled = false;
+      const timeoutId = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        reject(new Error('Redactor extension did not respond in time.'));
+      }, 12000);
+
+      chrome.runtime.sendMessage({ type: 'redactor-check', text }, response => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeoutId);
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message));
+        } else if (!response) {
+          reject(new Error('Redactor backend returned no response.'));
+        } else {
+          resolve(response);
+        }
+      });
+    });
+  }
+
   async function parseRetryAfter(response) {
-    const retryHeader = response.headers ? response.headers.get('Retry-After') : null;
+    const retryHeader = response.retryAfter;
     if (retryHeader) {
       const parsed = parseInt(retryHeader, 10);
       if (!isNaN(parsed) && parsed > 0) return parsed;
     }
-    try {
-      const data = await response.clone().json();
-      if (data && data.retry_after_seconds) {
-        return data.retry_after_seconds;
-      }
-    } catch (_) {}
+    if (response.data && response.data.retry_after_seconds) {
+      return response.data.retry_after_seconds;
+    }
     return 2;
   }
 
@@ -148,6 +174,12 @@
     }, 500);
   }
 
+  function blockSubmission(promptElement, message, reasonDetail) {
+    updateRiskIndicator('block', promptElement, reasonDetail || message);
+    updateTextareaHighlights(promptElement, [], 'block');
+    createToast(message, 5000, true);
+  }
+
   // Core handler for checking prompt
   async function handleIntercept(e, promptElement) {
     if (isBypassingCheck) return;
@@ -155,6 +187,8 @@
     const text = getPromptText(promptElement).trim();
     if (!text) return;
 
+    clearTimeout(debounceTimer);
+    liveCheckRequestId++;
     e.preventDefault();
     e.stopPropagation();
     e.stopImmediatePropagation();
@@ -172,13 +206,7 @@
       }
 
       try {
-        response = await fetch('http://localhost:8000/check', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({ text })
-        });
+        response = await requestCheck(text);
 
         if (response.status === 429) {
           const retrySec = await parseRetryAfter(response);
@@ -194,8 +222,7 @@
       } catch (err) {
         if (attempt === maxRetries) {
           console.error('[Redactor] Error checking prompt:', err);
-          createToast('Redactor backend offline. Sending normally.', 3000, true);
-          triggerSubmit(promptElement);
+          blockSubmission(promptElement, 'Redactor backend unavailable. Prompt was not sent.');
           return;
         }
       }
@@ -203,25 +230,37 @@
 
     if (!response || !response.ok) {
       if (response && response.status === 429) {
-        createToast('Rate limit exceeded after retries. Please wait a moment.', 3000, true);
+        blockSubmission(promptElement, 'Rate limit exceeded. Prompt was not sent; please wait and retry.');
         return;
       }
-      createToast('Redactor backend offline. Sending normally.', 3000, true);
-      triggerSubmit(promptElement);
+      if (response && response.status === 0) {
+        blockSubmission(promptElement, 'Redactor backend unavailable. Prompt was not sent.');
+        return;
+      }
+      const statusText = response ? ` (HTTP ${response.status})` : '';
+      blockSubmission(promptElement, `Redactor check failed${statusText}. Prompt was not sent.`);
+      return;
+    }
+
+    if (getPromptText(promptElement).trim() !== text) {
+      console.info('[Redactor] Prompt changed during inspection; leaving the new text unsent.');
       return;
     }
 
     try {
-      const data = await response.json();
+      const data = response.data;
 
       if (data.action === 'allow') {
         updateRiskIndicator(null, promptElement);
         updateTextareaHighlights(promptElement, [], null);
         triggerSubmit(promptElement);
       } else if (data.action === 'redact') {
-        if (data.redacted_text) {
-          setPromptText(promptElement, data.redacted_text);
+        if (typeof data.redacted_text !== 'string') {
+          console.error('[Redactor] Redact response did not include redacted_text.');
+          blockSubmission(promptElement, 'Redactor returned an invalid redaction. Prompt was not sent.');
+          return;
         }
+        setPromptText(promptElement, data.redacted_text);
         updateRiskIndicator(null, promptElement);
         updateTextareaHighlights(promptElement, [], null);
         createToast('Redacted before sending', 2500, false);
@@ -234,14 +273,12 @@
         const reasonMsg = data.reason ? `Blocked: ${data.reason}` : 'Prompt blocked by Redactor';
         createToast(reasonMsg, 4000, true);
       } else {
-        // Default allow if unknown action
-        updateRiskIndicator(null, promptElement);
-        updateTextareaHighlights(promptElement, [], null);
-        triggerSubmit(promptElement);
+        console.error('[Redactor] Unexpected action in backend response:', data.action);
+        blockSubmission(promptElement, 'Redactor returned an invalid decision. Prompt was not sent.');
       }
     } catch (err) {
       console.error('[Redactor] Error processing response:', err);
-      triggerSubmit(promptElement);
+      blockSubmission(promptElement, 'Could not process Redactor response. Prompt was not sent.');
     }
   }
 
@@ -393,6 +430,15 @@
     } else if (action === 'block') {
       dotColor = '#f44336';
       labelText = 'Will be blocked';
+    } else if (action === 'checking') {
+      dotColor = '#89b4fa';
+      labelText = 'Checking...';
+    } else if (action === 'rate_limited') {
+      dotColor = '#ff9800';
+      labelText = 'Check rate limited';
+    } else if (action === 'unavailable') {
+      dotColor = '#f44336';
+      labelText = 'Check unavailable';
     }
 
     indicator.title = reasonDetail || labelText;
@@ -401,9 +447,11 @@
 
   // Debounced live risk check on typing
   let debounceTimer = null;
+  let liveCheckRequestId = 0;
 
   function onPromptInput(e) {
     clearTimeout(debounceTimer);
+    const requestId = ++liveCheckRequestId;
     const promptElement = findPromptElement();
     if (!promptElement) return;
 
@@ -415,31 +463,48 @@
     }
 
     if (Date.now() < rateLimitUntil) {
+      updateRiskIndicator('rate_limited', promptElement);
       return;
     }
 
+    updateRiskIndicator('checking', promptElement);
     debounceTimer = setTimeout(async () => {
-      if (Date.now() < rateLimitUntil) return;
+      if (requestId !== liveCheckRequestId || getPromptText(promptElement).trim() !== text) return;
+      if (Date.now() < rateLimitUntil) {
+        updateRiskIndicator('rate_limited', promptElement);
+        return;
+      }
 
       try {
-        const response = await fetch('http://localhost:8000/check', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text })
-        });
+        const response = await requestCheck(text);
         if (response.status === 429) {
           const retrySec = await parseRetryAfter(response);
           rateLimitUntil = Date.now() + (retrySec * 1000);
           console.warn(`[Redactor] 429 Rate limit hit on typing check. Pausing live checks for ${retrySec}s.`);
+          if (requestId === liveCheckRequestId && getPromptText(promptElement).trim() === text) {
+            updateRiskIndicator('rate_limited', promptElement);
+          }
           return;
         }
-        if (response.ok) {
-          const data = await response.json();
-          updateRiskIndicator(data.action, promptElement, data.reason_detail);
-          updateTextareaHighlights(promptElement, data.matches || [], data.action);
+
+        if (!response.ok) {
+          const error = response.error || `Backend returned HTTP ${response.status}`;
+          throw new Error(error);
         }
+
+        const data = response.data;
+        if (requestId !== liveCheckRequestId || getPromptText(promptElement).trim() !== text) return;
+        if (!['allow', 'redact', 'block'].includes(data.action)) {
+          throw new Error(`Unexpected backend action: ${data.action}`);
+        }
+        updateRiskIndicator(data.action, promptElement, data.reason_detail);
+        updateTextareaHighlights(promptElement, data.matches || [], data.action);
       } catch (err) {
         console.error('[Redactor] Error in live risk check:', err);
+        if (requestId === liveCheckRequestId && getPromptText(promptElement).trim() === text) {
+          updateRiskIndicator('unavailable', promptElement);
+          updateTextareaHighlights(promptElement, [], null);
+        }
       }
     }, 600);
   }
@@ -470,6 +535,14 @@
       if (promptElement) {
         handleIntercept(e, promptElement);
       }
+    }
+  }, true);
+
+  document.addEventListener('submit', function (e) {
+    const form = e.target;
+    const promptElement = findPromptElement();
+    if (form instanceof HTMLFormElement && promptElement && form.contains(promptElement)) {
+      handleIntercept(e, promptElement);
     }
   }, true);
 

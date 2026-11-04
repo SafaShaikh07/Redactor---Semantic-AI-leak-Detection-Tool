@@ -1,12 +1,15 @@
 {
   "manifest_version": 3,
   "name": "Redactor - ChatGPT Security Guard",
-  "version": "1.0",
+  "version": "1.0.1",
   "description": "Intercepts and redacts sensitive data before sending prompts to ChatGPT.",
   "host_permissions": [
     "http://localhost:8000/*",
     "http://127.0.0.1:8000/*"
   ],
+  "background": {
+    "service_worker": "background.js"
+  },
   "content_scripts": [
     {
       "matches": [
