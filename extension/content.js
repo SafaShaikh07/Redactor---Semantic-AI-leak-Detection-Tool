@@ -337,62 +337,64 @@
       .replace(/'/g, '&#039;');
   }
 
+  let highlightedPromptElement = null;
+
   // Live inline overlay preview for matched redaction spans
   function updateTextareaHighlights(promptElement, matches, action) {
     let backdrop = document.getElementById('redactor-textarea-backdrop');
 
     if (!promptElement || !matches || matches.length === 0) {
       if (backdrop) backdrop.style.display = 'none';
+      highlightedPromptElement = null;
       return;
     }
 
     const text = getPromptText(promptElement);
     if (!text) {
       if (backdrop) backdrop.style.display = 'none';
+      highlightedPromptElement = null;
       return;
     }
 
-    const parent = promptElement.closest('form') || promptElement.parentElement;
-    if (!parent) return;
-
-    const computedParent = window.getComputedStyle(parent);
-    if (computedParent.position === 'static') {
-      parent.style.position = 'relative';
-    }
+    highlightedPromptElement = promptElement;
 
     if (!backdrop) {
       backdrop = document.createElement('div');
       backdrop.id = 'redactor-textarea-backdrop';
-      parent.appendChild(backdrop);
+      document.body.appendChild(backdrop);
     }
 
     const rect = promptElement.getBoundingClientRect();
-    const parentRect = parent.getBoundingClientRect();
     const style = window.getComputedStyle(promptElement);
 
     backdrop.style.cssText = `
-      position: absolute;
-      top: ${rect.top - parentRect.top}px;
-      left: ${rect.left - parentRect.left}px;
+      position: fixed;
+      top: ${rect.top}px;
+      left: ${rect.left}px;
       width: ${rect.width}px;
       height: ${rect.height}px;
       padding: ${style.padding};
-      margin: ${style.margin};
-      box-sizing: ${style.boxSizing};
+      border: ${style.border};
+      margin: 0;
+      box-sizing: border-box;
       font-family: ${style.fontFamily};
       font-size: ${style.fontSize};
       font-weight: ${style.fontWeight};
       line-height: ${style.lineHeight};
       letter-spacing: ${style.letterSpacing};
+      text-align: ${style.textAlign};
       white-space: pre-wrap;
       word-wrap: break-word;
       word-break: break-word;
       color: transparent;
+      background: transparent;
       pointer-events: none;
-      z-index: 4;
+      z-index: 2147483646;
       overflow: hidden;
       display: block;
     `;
+    backdrop.scrollTop = promptElement.scrollTop || 0;
+    backdrop.scrollLeft = promptElement.scrollLeft || 0;
 
     const sortedMatches = matches.slice().sort((a, b) => a.start - b.start);
     let html = '';
@@ -415,6 +417,27 @@
 
     backdrop.innerHTML = html;
   }
+
+  function repositionTextareaHighlight() {
+    const backdrop = document.getElementById('redactor-textarea-backdrop');
+    if (!backdrop || !highlightedPromptElement) return;
+    if (!document.contains(highlightedPromptElement)) {
+      backdrop.style.display = 'none';
+      highlightedPromptElement = null;
+      return;
+    }
+
+    const rect = highlightedPromptElement.getBoundingClientRect();
+    backdrop.style.top = `${rect.top}px`;
+    backdrop.style.left = `${rect.left}px`;
+    backdrop.style.width = `${rect.width}px`;
+    backdrop.style.height = `${rect.height}px`;
+    backdrop.scrollTop = highlightedPromptElement.scrollTop || 0;
+    backdrop.scrollLeft = highlightedPromptElement.scrollLeft || 0;
+  }
+
+  document.addEventListener('scroll', repositionTextareaHighlight, true);
+  window.addEventListener('resize', repositionTextareaHighlight);
 
   // Update persistent risk indicator in bottom corner of textarea
   function updateRiskIndicator(action, promptElement, reasonDetail) {
@@ -495,7 +518,7 @@
   let debounceTimer = null;
   let liveCheckRequestId = 0;
 
-  function onPromptInput(e) {
+  function onPromptInput(e, delay = 600) {
     clearTimeout(debounceTimer);
     const requestId = ++liveCheckRequestId;
     const promptElement = findPromptElement();
@@ -552,15 +575,21 @@
           updateTextareaHighlights(promptElement, [], null);
         }
       }
-    }, 600);
+    }, delay);
   }
 
   // Listener for typing input in prompt element
   document.addEventListener('input', function (e) {
     const promptElement = findPromptElement();
     if (promptElement && (e.target === promptElement || promptElement.contains(e.target))) {
-      onPromptInput(e);
+      onPromptInput(e, e.inputType === 'insertFromPaste' ? 100 : 600);
     }
+  }, true);
+
+  document.addEventListener('paste', function (e) {
+    const promptElement = findPromptElement();
+    if (!promptElement || (e.target !== promptElement && !promptElement.contains(e.target))) return;
+    setTimeout(() => onPromptInput(e, 100), 0);
   }, true);
 
   // Listener for keydown (Enter) on prompt textarea

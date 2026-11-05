@@ -29,6 +29,67 @@ def get_severity(reason: str, matched_text: str) -> str:
 
 PATTERNS = [
     (
+        "aws_access_key",
+        re.compile(r"\b(?:AKIA|ASIA|AIDA|AROA|AIPA|ANPA|ANVA|ASCA)[A-Z0-9]{16}\b"),
+        "[REDACTED: aws_access_key]"
+    ),
+    (
+        "generic_secret_assignment",
+        re.compile(
+            r"\b(?:api[ _-]*key|aws[ _-]*access[ _-]*key|access[ _-]*key|secret(?:[ _-]*key)?|token|password|pwd|database[ _-]*password)\s*[:=]\s*(?:[\"']?)([^\s,;\"']+)",
+            re.IGNORECASE
+        ),
+        "[REDACTED: generic_secret_assignment]",
+        1
+    ),
+    (
+        "employee_name",
+        re.compile(r"\b(?:employee|staff)\s+name\s*[:=]\s*([^\n;,]+)", re.IGNORECASE),
+        "[REDACTED: employee_name]",
+        1
+    ),
+    (
+        "employee_id",
+        re.compile(r"\b(?:employee|staff)\s*(?:id|number|no\.?|#)\s*[:=]\s*([A-Z0-9][A-Z0-9_-]{4,})", re.IGNORECASE),
+        "[REDACTED: employee_id]",
+        1
+    ),
+    (
+        "home_address",
+        re.compile(r"\b(?:(?:home|residential)\s+)?address\s*[:=]\s*([^\n;]+)", re.IGNORECASE),
+        "[REDACTED: home_address]",
+        1
+    ),
+    (
+        "bank_account_number",
+        re.compile(r"\b(?:(?:corporate|bank)\s+)?account\s*(?:number|no\.?|#)\s*[:=]\s*([A-Z0-9][A-Z0-9-]{5,})", re.IGNORECASE),
+        "[REDACTED: bank_account_number]",
+        1
+    ),
+    (
+        "transaction_reference",
+        re.compile(r"\b(?:transaction(?:\s+reference)?|txn(?:\s+reference)?|reference)\s*(?:id|number|no\.?|#)?\s*[:=]\s*([A-Z0-9][A-Z0-9_-]{5,})", re.IGNORECASE),
+        "[REDACTED: transaction_reference]",
+        1
+    ),
+    (
+        "financial_amount",
+        re.compile(
+            r"\b(?:quarterly\s+revenue|revenue|pending\s+vendor\s+payment|vendor\s+payment)\s*[:=]\s*((?:INR\s*)?(?:[$\u20b9\u20ac\u00a3]\s*)?\d[\d,]*(?:\.\d+)?(?:\s*(?:crore|lakh|million|billion|thousand))?)",
+            re.IGNORECASE
+        ),
+        "[REDACTED: financial_amount]",
+        1
+    ),
+    (
+        "business_acquisition",
+        re.compile(
+            r"\b(?:undisclosed|unannounced|confidential|secret)\s+(?:planned\s+)?(?:acquisition|merger|purchase|takeover)(?:\s+of\s+[^.;\n]+)?",
+            re.IGNORECASE
+        ),
+        "[REDACTED: business_acquisition]"
+    ),
+    (
         "api_key",
         re.compile(r"(?:sk-(?:[a-zA-Z0-9]+-)?[a-zA-Z0-9_-]{20,}|sk_(?:test|live)_[a-zA-Z0-9_-]{20,})"),
         "[REDACTED: api_key]"
@@ -116,9 +177,10 @@ def get_match_spans(text: str) -> List[dict]:
         reason = item[0]
         pattern = item[1]
         replacement = item[2] if len(item) > 2 else f"[REDACTED: {reason}]"
+        capture_group = item[3] if len(item) > 3 else None
 
         matches_orig = list(pattern.finditer(text))
-        matches_norm = list(pattern.finditer(norm_text)) if norm_map else []
+        matches_norm = list(pattern.finditer(norm_text)) if norm_map and capture_group is None else []
 
         found_matches = []
         for match in matches_orig:
@@ -143,7 +205,17 @@ def get_match_spans(text: str) -> List[dict]:
             if any(ranges_overlap(m_start, m_end, existing["start"], existing["end"]) for existing in spans):
                 continue
 
-            if replacement == "luhn_callback":
+            if capture_group is not None:
+                capture_start = match_obj.start(capture_group)
+                capture_end = match_obj.end(capture_group)
+                if capture_start >= 0 and capture_end > capture_start:
+                    spans.append({
+                        "start": capture_start,
+                        "end": capture_end,
+                        "reason": reason,
+                        "severity": "redact"
+                    })
+            elif replacement == "luhn_callback":
                 if is_luhn_valid(matched_str):
                     spans.append({"start": m_start, "end": m_end, "reason": "credit_card", "severity": "redact"})
             elif replacement == "ip_callback":

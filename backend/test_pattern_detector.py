@@ -194,6 +194,50 @@ def test_multiple_categories():
     assert "[REDACTED: pan_number]" in redacted
     assert "[REDACTED: phone_number]" in redacted
 
+def test_labeled_business_fields():
+    text = "\n".join([
+        "Employee Name: Morgan Example",
+        "Employee ID: EMP-2030-54321",
+        "Home Address: 10 Demo Street, Example City",
+        "Corporate Account Number: 123456789012",
+        "Transaction Reference: TXN-IND-2030-123456",
+        "API Key: sk_test_SAMPLE123SECRET",
+        "AWS Access Key: AKIAIOSFODNN7EXAMPLE",
+        "Quarterly Revenue: \u20b98.7 crore",
+        "Pending Vendor Payment: \u20b924,50,000",
+        "The company plans an undisclosed acquisition of a rival startup.",
+    ])
+    redacted, has_secrets, reasons, _ = scan_and_redact(text)
+    expected_reasons = {
+        "employee_name",
+        "employee_id",
+        "home_address",
+        "bank_account_number",
+        "transaction_reference",
+        "generic_secret_assignment",
+        "aws_access_key",
+        "financial_amount",
+        "business_acquisition",
+    }
+    assert has_secrets
+    assert expected_reasons.issubset(set(reasons))
+    for value in (
+        "Morgan Example",
+        "EMP-2030-54321",
+        "10 Demo Street",
+        "123456789012",
+        "TXN-IND-2030-123456",
+        "sk_test_SAMPLE123SECRET",
+        "AKIAIOSFODNN7EXAMPLE",
+        "8.7 crore",
+        "2,450,000",
+        "undisclosed acquisition of a rival startup",
+    ):
+        assert value not in redacted
+
+    benign = "A generic guide about employee identifiers and quarterly revenue analysis."
+    assert not scan_and_redact(benign)[1]
+
 def test_no_false_positives():
     text = "In year 2026, we counted 5000 items and 123 apples."
     redacted, has_secrets, reasons, spans = scan_and_redact(text)
@@ -225,6 +269,7 @@ def test_severity_levels():
     assert all(s["severity"] == "redact" for s in spans6)
 
 if __name__ == "__main__":
+    test_labeled_business_fields()
     test_api_key()
     test_email()
     test_project_codename()

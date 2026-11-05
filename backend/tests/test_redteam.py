@@ -82,6 +82,31 @@ TEST_CASES = [
         "name": "Unrelated December launch",
         "input": "A harmless public launch announcement for an unrelated product is planned for December.",
     },
+    {
+        "id": 15,
+        "name": "Production vulnerability disclosure",
+        "input": "An internal report found several critical security weaknesses in the production systems.",
+    },
+    {
+        "id": 16,
+        "name": "Proprietary fraud model and data",
+        "input": "The proprietary AI fraud scoring algorithm and its private training dataset must not be shared externally.",
+    },
+    {
+        "id": 17,
+        "name": "Undisclosed competitor acquisition",
+        "input": "The company plans an undisclosed acquisition of a rival cybersecurity startup.",
+    },
+    {
+        "id": 18,
+        "name": "Harmless security guidance",
+        "input": "What are general best practices for testing a web application for security weaknesses?",
+    },
+    {
+        "id": 19,
+        "name": "General public machine learning",
+        "input": "Explain how a machine learning model can be trained on public example data.",
+    },
 ]
 
 def save_coverage_results(redteam_data):

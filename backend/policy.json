@@ -16,6 +16,14 @@
     "phone_number": "redact",
     "ip_address:private": "redact",
     "ip_address:public": "redact",
-    "crypto_wallet": "redact"
+    "crypto_wallet": "redact",
+    "aws_access_key": "redact",
+    "employee_name": "redact",
+    "employee_id": "redact",
+    "home_address": "redact",
+    "bank_account_number": "redact",
+    "transaction_reference": "redact",
+    "financial_amount": "redact",
+    "business_acquisition": "redact"
   }
 }

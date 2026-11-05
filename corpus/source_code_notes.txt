@@ -5,3 +5,5 @@ every 48 hours, and a collaborative filtering model trained on 18 months
 of interaction data. The core ranking function lives in ranking_engine.py 
 and must not be shared outside the ML team. Competitors have not been 
 able to replicate our click-through rate improvements using public methods.
+
+Proprietary fraud-detection algorithms, scoring logic, model weights, and internal training datasets are confidential intellectual property and must not be shared with external services.

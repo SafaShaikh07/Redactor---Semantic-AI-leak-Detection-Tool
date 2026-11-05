@@ -7,6 +7,8 @@ A Manifest V3 extension that intercepts ChatGPT prompts, checks them against the
 - **Prompt Interception**: Hooks into ChatGPT's prompt textarea and send button.
 - **Provider Support**: Uses provider-specific composer and submit selectors for ChatGPT, Claude, Gemini, and Microsoft Copilot.
 - **Live risk status**: Shows when a prompt is being checked, clear, sensitive, blocked, rate-limited, or unable to reach the backend. Stale results from earlier text are ignored.
+- **Fast paste checks**: Pasted prompts are checked shortly after insertion; normal typing remains debounced.
+- **Aligned highlights**: Sensitive spans stay positioned over the composer while it scrolls or resizes.
 - **Request timeout**: Backend checks time out instead of leaving the status on "Checking..." indefinitely.
 - **Backend Check**: The content script sends prompt text through the Manifest V3 service worker to `http://localhost:8000/check`, using the extension's localhost host permission.
 - **Actions**:

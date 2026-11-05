@@ -58,6 +58,8 @@ class TestRateLimiterIntegration(unittest.TestCase):
         self.assertEqual(policy.status_code, 200)
         self.assertEqual(policy.json()["default_action"], "redact")
         self.assertIn("email", policy.json()["category_actions"])
+        self.assertIn("employee_id", policy.json()["category_actions"])
+        self.assertIn("financial_amount", policy.json()["category_actions"])
 
     def test_policy_can_allow_category_without_downgrading_mandatory_block(self):
         from unittest.mock import patch
@@ -114,6 +116,37 @@ class TestRateLimiterIntegration(unittest.TestCase):
         # Check /metrics reflect remaining = 14
         metrics = self.client.get("/metrics").json()
         self.assertEqual(metrics["rate_limit"]["remaining"], 14)
+
+    def test_structured_sensitive_fields_are_redacted_by_api(self):
+        text = "\n".join([
+            "Employee Name: Alice Example",
+            "Employee ID: EMP-2030-54321",
+            "Home Address: 10 Demo Street, Example City",
+            "Corporate Account Number: 123456789012",
+            "Transaction Reference: TXN-IND-2030-123456",
+            "API Key: sk_test_SAMPLE123SECRET",
+            "AWS Access Key: AKIAIOSFODNN7EXAMPLE",
+            "Quarterly Revenue: \u20b98.7 crore",
+            "Pending Vendor Payment: \u20b924,50,000",
+            "The company plans an undisclosed acquisition of a rival startup.",
+        ])
+        response = self.client.post("/check", json={"text": text})
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data["action"], "redact")
+        for value in (
+            "Alice Example",
+            "EMP-2030-54321",
+            "10 Demo Street",
+            "123456789012",
+            "TXN-IND-2030-123456",
+            "sk_test_SAMPLE123SECRET",
+            "AKIAIOSFODNN7EXAMPLE",
+            "8.7 crore",
+            "24,50,000",
+            "undisclosed acquisition of a rival startup",
+        ):
+            self.assertNotIn(value, data["redacted_text"])
 
     def test_rapid_artificial_burst_throttling(self):
         """Simulate rapid artificial requests (50 requests in tight loop).
