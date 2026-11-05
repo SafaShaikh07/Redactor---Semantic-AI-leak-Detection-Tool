@@ -1,18 +1,65 @@
 import time
 import json
+import os
 import threading
 from collections import deque
 from pathlib import Path
 from fastapi import FastAPI, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional, List
-from corpus import SEMANTIC_THRESHOLD, analyze_semantic
+from corpus import CORPUS_DIR, SEMANTIC_THRESHOLD, analyze_semantic, doc_names, model
 from pattern_detector import scan_and_redact
 from db import log_check, get_recent_logs, get_metrics
 
 RESULTS_FILE = Path(__file__).parent / "coverage_results.json"
+POLICY_PATH = Path(os.getenv("REDACTOR_POLICY_PATH", str(Path(__file__).with_name("policy.json")))).expanduser().resolve()
+VALID_POLICY_ACTIONS = {"allow", "redact", "block"}
+DEFAULT_POLICY = {
+    "default_action": "redact",
+    "semantic_action": "redact",
+    "category_actions": {}
+}
+
+
+def _load_policy_config():
+    if not POLICY_PATH.exists():
+        return DEFAULT_POLICY.copy()
+
+    config = json.loads(POLICY_PATH.read_text(encoding="utf-8"))
+    if not isinstance(config, dict):
+        raise ValueError(f"Policy file must contain a JSON object: {POLICY_PATH}")
+
+    default_action = config.get("default_action", DEFAULT_POLICY["default_action"])
+    semantic_action = config.get("semantic_action", DEFAULT_POLICY["semantic_action"])
+    category_actions = config.get("category_actions", {})
+    if default_action not in VALID_POLICY_ACTIONS or semantic_action not in VALID_POLICY_ACTIONS:
+        raise ValueError("Policy actions must be allow, redact, or block")
+    if not isinstance(category_actions, dict):
+        raise ValueError("Policy category_actions must be a JSON object")
+    if any(action not in VALID_POLICY_ACTIONS for action in category_actions.values()):
+        raise ValueError("Policy category actions must be allow, redact, or block")
+
+    return {
+        "default_action": default_action,
+        "semantic_action": semantic_action,
+        "category_actions": category_actions
+    }
+
+
+POLICY_CONFIG = _load_policy_config()
+
+
+def _action_for_match(match):
+    if match.get("severity") == "block":
+        return "block"
+    if match.get("reason") == "semantic match":
+        return POLICY_CONFIG["semantic_action"]
+    return POLICY_CONFIG["category_actions"].get(
+        match.get("reason"),
+        POLICY_CONFIG["default_action"]
+    )
 
 
 class SlidingWindowRateLimiter:
@@ -75,17 +122,25 @@ rate_limiter = SlidingWindowRateLimiter(limit=30, window_seconds=10.0)
 
 app = FastAPI(title="Redactor API")
 
+ALLOWED_ORIGINS = [
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=ALLOWED_ORIGINS,
+    allow_origin_regex=r"^chrome-extension://[a-p]{32}$",
+    allow_credentials=False,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type"],
 )
 
 
+MAX_INPUT_LENGTH = 51200  # 50 KB
+
 class CheckRequest(BaseModel):
-    text: str
+    text: str = Field(..., min_length=1, max_length=MAX_INPUT_LENGTH)
 
 
 class MatchSpan(BaseModel):
@@ -293,6 +348,16 @@ def get_dashboard():
     </details>
 
     <script>
+        function escapeHtml(str) {
+            if (str === null || str === undefined) return '';
+            return String(str)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#039;');
+        }
+
         async function fetchMetrics() {
             try {
                 const res = await fetch('/metrics');
@@ -319,15 +384,17 @@ def get_dashboard():
                     return;
                 }
                 tbody.innerHTML = data.map(log => {
-                    const actionClass = `action-${log.action.toLowerCase()}`;
-                    const badgeClass = `badge-${log.action.toLowerCase()}`;
+                    const action = escapeHtml(log.action);
+                    const actionClass = `action-${(log.action || '').toLowerCase()}`;
+                    const badgeClass = `badge-${(log.action || '').toLowerCase()}`;
                     const timeStr = log.timestamp ? new Date(log.timestamp).toLocaleTimeString() : '-';
-                    const detailStr = (log.reason_detail || log.reason || '').replace(/"/g, '&quot;');
+                    const detailStr = escapeHtml(log.reason_detail || log.reason || '');
+                    const reasonStr = escapeHtml(log.reason || '');
                     return `
                         <tr class="${actionClass}">
-                            <td>${timeStr}</td>
-                            <td><span class="badge ${badgeClass}">${log.action}</span></td>
-                            <td title="${detailStr}" style="cursor: help; text-decoration: underline dotted #666;">${log.reason}</td>
+                            <td>${escapeHtml(timeStr)}</td>
+                            <td><span class="badge ${badgeClass}">${action}</span></td>
+                            <td title="${detailStr}" style="cursor: help; text-decoration: underline dotted #666;">${reasonStr}</td>
                         </tr>
                     `;
                 }).join('');
@@ -349,16 +416,17 @@ def get_dashboard():
                 if (data.redteam && data.redteam.cases) {
                     const tbody = document.getElementById('coverage-body');
                     tbody.innerHTML = data.redteam.cases.map(c => {
-                        const actionClass = `action-${c.action.toLowerCase()}`;
-                        const badgeClass = `badge-${c.action.toLowerCase()}`;
+                        const action = escapeHtml(c.action);
+                        const actionClass = `action-${(c.action || '').toLowerCase()}`;
+                        const badgeClass = `badge-${(c.action || '').toLowerCase()}`;
                         return `
                             <tr class="${actionClass}">
-                                <td>${c.id}</td>
-                                <td>${c.name}</td>
-                                <td>${c.regex}</td>
-                                <td>${c.semantic}</td>
-                                <td><span class="badge ${badgeClass}">${c.action}</span></td>
-                                <td>${c.detail}</td>
+                                <td>${escapeHtml(String(c.id))}</td>
+                                <td>${escapeHtml(c.name)}</td>
+                                <td>${escapeHtml(c.regex)}</td>
+                                <td>${escapeHtml(c.semantic)}</td>
+                                <td><span class="badge ${badgeClass}">${action}</span></td>
+                                <td>${escapeHtml(c.detail)}</td>
                             </tr>
                         `;
                     }).join('');
@@ -385,6 +453,31 @@ def get_dashboard():
 @app.get("/logs")
 def get_logs():
     return get_recent_logs(limit=50)
+
+
+@app.get("/health")
+def get_health():
+    model_loaded = model is not None
+    corpus_loaded = bool(doc_names)
+    return {
+        "status": "ok" if model_loaded and corpus_loaded else "degraded",
+        "model": "all-MiniLM-L6-v2",
+        "model_loaded": model_loaded,
+        "corpus_loaded": corpus_loaded,
+        "corpus_reference_sentences": len(doc_names),
+        "corpus_directory": str(CORPUS_DIR),
+        "semantic_threshold": SEMANTIC_THRESHOLD,
+    }
+
+
+@app.get("/policy")
+def get_policy():
+    return {
+        **POLICY_CONFIG,
+        "policy_file": str(POLICY_PATH),
+        "semantic_threshold": SEMANTIC_THRESHOLD,
+        "corpus_directory": str(CORPUS_DIR),
+    }
 
 
 @app.get("/metrics")
@@ -442,6 +535,24 @@ def check_text(request: CheckRequest, response: Response):
     score = semantic_result.score
     is_semantic_match = score >= SEMANTIC_THRESHOLD
 
+    semantic_match = {
+        "reason": "semantic match",
+        "severity": "redact",
+    }
+    semantic_policy_action = _action_for_match(semantic_match) if is_semantic_match else None
+    redaction_matches = [
+        match for match in raw_matches
+        if _action_for_match(match) == "redact"
+    ]
+    has_policy_block = any(
+        _action_for_match(match) == "block"
+        for match in raw_matches
+    ) or semantic_policy_action == "block"
+    has_policy_redact = any(
+        _action_for_match(match) == "redact"
+        for match in raw_matches
+    ) or semantic_policy_action == "redact"
+
     latency_ms = round((time.perf_counter() - t0) * 1000, 2)
 
     matches = [
@@ -463,7 +574,7 @@ def check_text(request: CheckRequest, response: Response):
         ))
 
     # Check for BLOCK-level severity priority
-    has_block = any(m.severity == "block" for m in matches)
+    has_block = has_policy_block
 
     # Construct structured details
     detail_parts = []
@@ -498,16 +609,20 @@ def check_text(request: CheckRequest, response: Response):
             reason_detail=reason_detail
         )
 
-    if has_secrets or is_semantic_match:
+    if has_policy_redact:
         action = "redact"
         matched_doc = doc_name if is_semantic_match else None
 
         if has_secrets and is_semantic_match:
             reason = f"secret ({', '.join(secret_reasons)}) & semantic match"
-            redacted_text = _redact_matches(input_text, raw_matches, semantic_result)
+            redacted_text = _redact_matches(
+                input_text,
+                redaction_matches,
+                semantic_result if semantic_policy_action == "redact" else None
+            )
         elif has_secrets:
             reason = ", ".join(secret_reasons)
-            redacted_text = secret_redacted_text
+            redacted_text = _redact_matches(input_text, redaction_matches)
         else:
             reason = "semantic match"
             redacted_text = _redact_matches(input_text, [], semantic_result)
@@ -523,13 +638,13 @@ def check_text(request: CheckRequest, response: Response):
         )
 
     action = "allow"
-    reason = "no match"
+    reason = "policy allow" if has_secrets or is_semantic_match else "no match"
     log_check(input_len, action, reason, None, None, latency_ms)
     return CheckResponse(
         action=action,
         reason=reason,
         matched_doc=None,
         redacted_text=None,
-        matches=[],
+        matches=matches,
         reason_detail=None
     )

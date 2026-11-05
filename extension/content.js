@@ -14,11 +14,50 @@
 
   let isBypassingCheck = false;
   let rateLimitUntil = 0;
+  const PROVIDERS = [
+    {
+      host: 'chatgpt.com',
+      promptSelectors: ['#prompt-textarea', '[data-testid="composer-text-input"]', 'textarea[placeholder*="Message"]', 'div[contenteditable="true"]'],
+      sendSelectors: ['button[data-testid="send-button"]', 'button[aria-label*="Send"]', 'form button[type="submit"]']
+    },
+    {
+      host: 'claude.ai',
+      promptSelectors: ['div.ProseMirror[contenteditable="true"]', '[contenteditable="true"][data-placeholder]', 'div[contenteditable="true"]', 'textarea'],
+      sendSelectors: ['button[aria-label*="Send message"]', 'button[aria-label*="Send"]', 'form button[type="submit"]']
+    },
+    {
+      host: 'gemini.google.com',
+      promptSelectors: ['rich-textarea .ql-editor[contenteditable="true"]', '.ql-editor[contenteditable="true"]', 'div[contenteditable="true"][aria-label]', 'textarea'],
+      sendSelectors: ['button.send-button', 'button[aria-label*="Send"]', 'form button[type="submit"]']
+    },
+    {
+      host: 'copilot.microsoft.com',
+      promptSelectors: ['textarea#userInput', 'textarea[placeholder*="Ask"]', '[contenteditable="true"][role="textbox"]', 'div[contenteditable="true"]'],
+      sendSelectors: ['button[aria-label*="Submit"]', 'button[data-testid*="send"]', 'button[aria-label*="Send"]', 'form button[type="submit"]']
+    }
+  ];
+
+  function getActiveProvider() {
+    return PROVIDERS.find(provider =>
+      window.location.hostname === provider.host || window.location.hostname.endsWith(`.${provider.host}`)
+    ) || PROVIDERS[0];
+  }
+
+  function findVisibleElement(selectors) {
+    for (const selector of selectors) {
+      for (const element of document.querySelectorAll(selector)) {
+        if (element.getClientRects().length && !element.disabled) return element;
+      }
+    }
+    return null;
+  }
 
   function requestCheck(text) {
     return new Promise((resolve, reject) => {
       if (typeof chrome === 'undefined' || !chrome.runtime || !chrome.runtime.sendMessage) {
-        reject(new Error('Redactor extension messaging is unavailable.'));
+        const error = new Error('Redactor extension context is unavailable. Reload the extension and refresh this tab.');
+        error.code = 'EXTENSION_CONTEXT_UNAVAILABLE';
+        reject(error);
         return;
       }
 
@@ -26,21 +65,31 @@
       const timeoutId = setTimeout(() => {
         if (settled) return;
         settled = true;
-        reject(new Error('Redactor extension did not respond in time.'));
+        const error = new Error('Redactor extension did not respond in time. Reload the extension and refresh this tab.');
+        error.code = 'EXTENSION_RESPONSE_TIMEOUT';
+        reject(error);
       }, 12000);
 
-      chrome.runtime.sendMessage({ type: 'redactor-check', text }, response => {
-        if (settled) return;
-        settled = true;
+      try {
+        chrome.runtime.sendMessage({ type: 'redactor-check', text }, response => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timeoutId);
+          if (chrome.runtime.lastError) {
+            const error = new Error(chrome.runtime.lastError.message);
+            error.code = 'EXTENSION_CONTEXT_UNAVAILABLE';
+            reject(error);
+          } else if (!response) {
+            reject(new Error('Redactor backend returned no response.'));
+          } else {
+            resolve(response);
+          }
+        });
+      } catch (error) {
         clearTimeout(timeoutId);
-        if (chrome.runtime.lastError) {
-          reject(new Error(chrome.runtime.lastError.message));
-        } else if (!response) {
-          reject(new Error('Redactor backend returned no response.'));
-        } else {
-          resolve(response);
-        }
-      });
+        error.code = 'EXTENSION_CONTEXT_UNAVAILABLE';
+        reject(error);
+      }
     });
   }
 
@@ -136,20 +185,12 @@
 
   // Find ChatGPT prompt input element
   function findPromptElement() {
-    return (
-      document.querySelector('#prompt-textarea') ||
-      document.querySelector('textarea') ||
-      document.querySelector('div[contenteditable="true"]')
-    );
+    return findVisibleElement(getActiveProvider().promptSelectors);
   }
 
   // Find ChatGPT send button
   function findSendButton() {
-    return (
-      document.querySelector('button[data-testid="send-button"]') ||
-      document.querySelector('button[aria-label*="Send"]') ||
-      document.querySelector('form button[type="submit"]')
-    );
+    return findVisibleElement(getActiveProvider().sendSelectors);
   }
 
   // Submit prompt programmatically
@@ -220,6 +261,11 @@
 
         break;
       } catch (err) {
+        if (err && ['EXTENSION_CONTEXT_UNAVAILABLE', 'EXTENSION_RESPONSE_TIMEOUT'].includes(err.code)) {
+          console.error('[Redactor] Extension messaging failed:', err);
+          blockSubmission(promptElement, err.message);
+          return;
+        }
         if (attempt === maxRetries) {
           console.error('[Redactor] Error checking prompt:', err);
           blockSubmission(promptElement, 'Redactor backend unavailable. Prompt was not sent.');
@@ -234,7 +280,7 @@
         return;
       }
       if (response && response.status === 0) {
-        blockSubmission(promptElement, 'Redactor backend unavailable. Prompt was not sent.');
+        blockSubmission(promptElement, response.error || 'Redactor backend unavailable. Prompt was not sent.');
         return;
       }
       const statusText = response ? ` (HTTP ${response.status})` : '';

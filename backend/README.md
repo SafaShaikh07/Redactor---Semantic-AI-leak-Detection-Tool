@@ -25,6 +25,12 @@ $env:REDACTOR_CORPUS_DIR = "C:\path\to\confidential-corpus"
 
 Tune the cutoff against representative positive and harmless negative examples for your organization; similarity is a signal for review/redaction, not proof of disclosure. `0.60` is calibrated against the repository's current Falcon paraphrases and negative controls, not a universal model guarantee.
 
+## Local Policy
+
+Edit `backend/policy.json` to configure the default action, semantic action, or individual category actions. Supported actions are `allow`, `redact`, and `block`. Severity-level mandatory detections such as SSNs, Aadhaar numbers, and private-key blocks cannot be downgraded by policy. Restart the backend after editing the file.
+
+Set `REDACTOR_POLICY_PATH` to use a policy file outside the repository. The active settings are visible at `http://127.0.0.1:8000/policy`; `http://127.0.0.1:8000/health` reports model and corpus readiness without exposing corpus contents.
+
 ## Setup & Run
 
 1. Navigate to the `backend` directory:

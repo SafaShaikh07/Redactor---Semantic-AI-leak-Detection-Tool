@@ -1,8 +1,7 @@
 import time
 import unittest
 from fastapi.testclient import TestClient
-from main import app, rate_limiter, SlidingWindowRateLimiter
-from main import app, rate_limiter, SlidingWindowRateLimiter
+from main import POLICY_CONFIG, app, rate_limiter, SlidingWindowRateLimiter
 from corpus import SEMANTIC_THRESHOLD, analyze_semantic
 
 
@@ -48,6 +47,46 @@ class TestRateLimiterIntegration(unittest.TestCase):
         self.assertIn("rate_limit", data)
         self.assertEqual(data["rate_limit"]["limit"], 30)
         self.assertEqual(data["rate_limit"]["remaining"], 30)
+
+    def test_health_and_policy_endpoints(self):
+        health = self.client.get("/health")
+        self.assertEqual(health.status_code, 200)
+        self.assertEqual(health.json()["status"], "ok")
+        self.assertGreater(health.json()["corpus_reference_sentences"], 0)
+
+        policy = self.client.get("/policy")
+        self.assertEqual(policy.status_code, 200)
+        self.assertEqual(policy.json()["default_action"], "redact")
+        self.assertIn("email", policy.json()["category_actions"])
+
+    def test_policy_can_allow_category_without_downgrading_mandatory_block(self):
+        from unittest.mock import patch
+
+        with patch.dict(POLICY_CONFIG["category_actions"], {"email": "allow", "ssn": "allow"}):
+            email_response = self.client.post("/check", json={"text": "Contact test.user@example.com"})
+            self.assertEqual(email_response.status_code, 200)
+            self.assertEqual(email_response.json()["action"], "allow")
+            self.assertIsNone(email_response.json()["redacted_text"])
+
+            ssn_response = self.client.post("/check", json={"text": "Synthetic SSN 123-45-6789"})
+            self.assertEqual(ssn_response.status_code, 200)
+            self.assertEqual(ssn_response.json()["action"], "block")
+
+    def test_chrome_extension_cors_preflight(self):
+        valid_origin = "chrome-extension://abcdefghijklmnopabcdefghijklmnop"
+        response = self.client.options("/check", headers={
+            "Origin": valid_origin,
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "content-type",
+        })
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers.get("Access-Control-Allow-Origin"), valid_origin)
+
+        invalid_response = self.client.options("/check", headers={
+            "Origin": "chrome-extension://not-a-valid-id",
+            "Access-Control-Request-Method": "POST",
+        })
+        self.assertEqual(invalid_response.status_code, 400)
 
     def test_normal_typing_simulation(self):
         """Simulate normal fast typing (~600ms per check for 10 seconds = ~16 checks).

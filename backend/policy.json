@@ -1,0 +1,21 @@
+{
+  "default_action": "redact",
+  "semantic_action": "redact",
+  "category_actions": {
+    "api_key": "redact",
+    "db_connection_string": "redact",
+    "private_key_block": "block",
+    "email": "redact",
+    "project_codename": "redact",
+    "generic_secret_assignment": "redact",
+    "pan_number": "redact",
+    "ssn": "block",
+    "credit_card": "redact",
+    "cvv": "redact",
+    "aadhaar_number": "block",
+    "phone_number": "redact",
+    "ip_address:private": "redact",
+    "ip_address:public": "redact",
+    "crypto_wallet": "redact"
+  }
+}
